@@ -1,12 +1,3 @@
-#[derive(Clone, Copy)]
-pub struct Controller {
-    buffer: [u8; 8],
-    startx: u8,
-    starty: u8,
-    c_startx: u8,
-    c_starty: u8,
-}
-
 /*
 //ty altimor!!
 let magnitude = Math.sqrt(x*x + y*y);
@@ -16,15 +7,25 @@ if (scale >= 1.0)
                         
 return [Math.trunc(x * scale), Math.trunc(y * scale)]
 */
-pub fn clamp(x: i8, y: i8) -> (i8, i8) {
-    let x = x as f64;
-    let y = y as f64;
-    let magnitude = f64::sqrt((x*x + y*y) as f64);
-    let scale = 80f64 / magnitude;
+pub fn clamp(x_in: i8, y_in: i8) -> (i8, i8) {
+    let x = x_in as f64;
+    let y = y_in as f64;
+    let magnitude = f64::sqrt(x*x + y*y);
+    let scale = 80. / magnitude;
     if scale >= 1.0 {
-        return (x as i8, y as i8)
+        return (x_in, y_in)
     }
     return ((x*scale).trunc() as i8, (y*scale).trunc() as i8)
+}
+
+#[derive(Clone, Copy)]
+pub struct Controller {
+    buffer: [u8; 8],
+    buffer_last: [u8; 8],
+    startx: u8,
+    starty: u8,
+    c_startx: u8,
+    c_starty: u8,
 }
 
 pub struct Button {
@@ -51,7 +52,7 @@ const BUTTONS: [Button; 12] = [A_BUTTON, B_BUTTON, X_BUTTON, Y_BUTTON, D_LEFT_BU
 
 impl Controller {
     pub fn new() -> Controller {
-        let c = Controller { buffer: [0; 8], startx: 0, starty: 0, c_startx: 0, c_starty: 0};
+        let c = Controller { buffer: [0; 8], buffer_last: [0; 8], startx: 0, starty: 0, c_startx: 0, c_starty: 0};
         c
     }
 
@@ -63,6 +64,7 @@ impl Controller {
             self.c_starty = buffer[5];
             println!("setting start pos's {} {} {} {}", self.startx, self.starty, self.c_startx, self.c_starty);
         }
+        self.buffer_last = self.buffer;
         self.buffer.copy_from_slice(buffer);
     }
 
@@ -78,6 +80,11 @@ impl Controller {
 
     pub fn is_down(&self, button: &Button) -> bool {
         self.buffer[button.index as usize] & button.mask != 0
+    }
+
+    pub fn just_pressed(&self, button: &Button) -> bool {
+        let pressed_last = self.buffer_last[button.index as usize] & button.mask != 0;
+        self.is_down(button) && !pressed_last
     }
     
     pub fn stick_pos(&self) -> (i8, i8) {
