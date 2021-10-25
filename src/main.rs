@@ -43,6 +43,11 @@ struct ScopePoint {
     point: (i8, i8),
     time: Instant,
 }
+#[derive(PartialEq)]
+enum ScopeDirection {
+    Vertical,
+    Horizontal,
+}
 struct Oscilliscope {
     scope_start_time: Instant,
     scope_canvas: Canvas,
@@ -51,13 +56,15 @@ struct Oscilliscope {
     scope_offset_old: f32,
     last_point: Option<ScopePoint>,
     plane: Box<dyn zones::Plane>,
+    canvas_width: u16,
+    canvas_height: u16,
+    direction: ScopeDirection,
 }
 
-
 impl Oscilliscope {
-    fn new(ctx: &mut Context) -> GameResult<Self> {
-        let scope_canvas = Canvas::new(ctx, 440, WIDTH, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
-        let scope_canvas_old = Canvas::new(ctx, 440, WIDTH, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
+    fn new(ctx: &mut Context, width: u16, height: u16, direction: ScopeDirection) -> GameResult<Self> {
+        let scope_canvas = Canvas::new(ctx, width, height, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
+        let scope_canvas_old = Canvas::new(ctx, width, height, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
         Ok(Oscilliscope {
             scope_canvas,
             scope_canvas_old,
@@ -66,16 +73,20 @@ impl Oscilliscope {
             scope_offset_old: 0.,
             last_point: None,
             plane: Box::new(zones::Test2 {}),
+            canvas_width: width,
+            canvas_height: height,
+            direction,
         })
     }
     
     fn update(&mut self, ctx: &mut Context, new_point: (i8, i8), time: Instant) -> GameResult<()> {
         fn time_offset(time: Duration) -> f32 {
-            time.as_micros() as f32 / 500.
+            time.as_micros() as f32 / 1000.
         }
 
+        //TODO this assumes canvas height
         let point_screen = to_screen_coords(&new_point);
-        let point_time_offset = time_offset(time - self.scope_start_time);
+        let point_time_offset = time_offset(time.saturating_duration_since(self.scope_start_time));
 
         //TODO let people change speed of oscilliscope
 
@@ -93,17 +104,24 @@ impl Oscilliscope {
             self.scope_offset = point_time_offset;
             
             graphics::set_canvas(ctx, Some(&self.scope_canvas));
-            graphics::set_screen_coordinates(ctx, Rect::new(0., 0., WIDTH as f32, 440.))?;
+            graphics::set_screen_coordinates(ctx, Rect::new(0., 0., self.canvas_width as f32, self.canvas_height as f32))?;
 
-            let line_coords = [[last_point_time_offset, last_point_screen[1]], [point_time_offset, point_screen[1]]];
+            let line_coords;
+            if self.direction == ScopeDirection::Horizontal {
+                line_coords = [[last_point_time_offset, last_point_screen[1]], [point_time_offset, point_screen[1]]];
+            }
+            else {
+                line_coords = [[last_point_screen[0], last_point_time_offset], [point_screen[0], point_time_offset]];
+            }
             let line = graphics::Mesh::new_line(ctx, &line_coords, 1., color);
             if let Ok(line) = line {
                 graphics::draw(ctx, &line, DrawParam::new())?;
             }
-            let point = Mesh::new_rectangle(ctx, DrawMode::fill(), [last_point_time_offset - 1., last_point_screen[1] - 1., 3., 3.].into(), color)?;
+            let point = Mesh::new_rectangle(ctx, DrawMode::fill(), [line_coords[0][0] - 1., line_coords[0][1] - 1., 3., 3.].into(), color)?;
             graphics::draw(ctx, &point, DrawParam::new())?;
 
-            if point_time_offset > 1100. {
+            //TODO magic number, where should it come from
+            if point_time_offset > 1200. {
                 self.scope_offset_old = point_time_offset;
                 self.scope_start_time = time;
                 let testrect = Mesh::new_rectangle(ctx, DrawMode::fill(), [0., 0., 5., 5.].into(), Color::RED)?;
@@ -122,9 +140,31 @@ impl Oscilliscope {
     }
     
     fn draw(&self, ctx: &mut Context) -> GameResult<()> {
-        graphics::draw(ctx, &self.scope_canvas, DrawParam::new().scale([-1., 1.]).offset([440. + self.scope_offset, 0.]))?;
-        graphics::draw(ctx, &self.scope_canvas_old, DrawParam::new().scale([-1., 1.]).offset([440. + self.scope_offset + self.scope_offset_old, 0.]))?;
+        //TODO ability to translate, pass in coords maybe?
+        let scale;
+        let offset;
+        let offset2;
+        if self.direction == ScopeDirection::Horizontal {
+            scale = [-1., 1.];
+            offset = [440. + self.scope_offset, 0.];
+            offset2 = [440. + self.scope_offset + self.scope_offset_old, 0.];
+        }
+        else {
+            scale = [1., -1.];
+            offset = [0., 440. + self.scope_offset];
+            offset2 = [0., 440. + self.scope_offset + self.scope_offset_old];
+        }
+        graphics::draw(ctx, &self.scope_canvas, DrawParam::new().scale(scale).offset(offset))?;
+        graphics::draw(ctx, &self.scope_canvas_old, DrawParam::new().scale(scale).offset(offset2))?;
         Ok(())
+    }
+
+    fn reset(&mut self, ctx: &mut Context) {
+        self.scope_start_time = Instant::now();//this might not work
+        self.scope_offset = 0.;
+        graphics::set_canvas(ctx, Some(&self.scope_canvas));
+        graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
+        graphics::set_canvas(ctx, None);
     }
 }
 
@@ -145,16 +185,8 @@ struct GameState {
     background_canvas: Option<Canvas>,
     trail_canvas: Canvas,
 
-    scope_start_time: Instant,
-    scope_canvas_y: Canvas,
-    scope_canvas_y_old: Canvas,
-    scope_offset_y: f32,
-    scope_offset_y_old: f32,
-    
-    scope_canvas_x: Canvas,
-    scope_canvas_x_old: Canvas,
-    scope_offset_x: f32,
-    scope_offset_x_old: f32,
+    scope_y: Oscilliscope,
+    scope_x: Oscilliscope,
 }
 
 impl GameState {
@@ -207,10 +239,8 @@ impl GameState {
 
     pub fn new(ctx: &mut Context, receiver: Receiver<ControllerPoll>) -> GameResult<GameState> {
         let trail_canvas = Canvas::new(ctx, WIDTH, HEIGHT, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
-        let scope_canvas_y = Canvas::new(ctx, WIDTH, 440, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
-        let scope_canvas_x = Canvas::new(ctx, 440, WIDTH, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
-        let scope_canvas_y_old = Canvas::new(ctx, WIDTH, 440, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
-        let scope_canvas_x_old = Canvas::new(ctx, 440, WIDTH, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
+        let oscilliscope_y = Oscilliscope::new(ctx, 1500, 440, ScopeDirection::Horizontal)?;
+        let oscilliscope_x = Oscilliscope::new(ctx, 400, 1500, ScopeDirection::Vertical)?;
         Ok(GameState {
             receiver,
             controllers: [Controller::new(); 4],
@@ -223,15 +253,8 @@ impl GameState {
             paused: false,
             background_canvas: None,
             trail_canvas,
-            scope_start_time: Instant::now(),
-            scope_canvas_y,
-            scope_canvas_x,
-            scope_offset_y: 0.,
-            scope_offset_x: 0.,
-            scope_canvas_y_old,
-            scope_canvas_x_old,
-            scope_offset_y_old: 0.,
-            scope_offset_x_old: 0.,
+            scope_y: oscilliscope_y,
+            scope_x: oscilliscope_x,
         })
     }
 }
@@ -259,14 +282,8 @@ impl EventHandler<ggez::GameError> for GameState {
             if self.paused {
                 if self.get_controller().just_pressed(&controller::START_BUTTON) {
                     self.paused = false;
-                    self.scope_start_time = poll.time;
-                    self.scope_offset_y = 0.;
-                    self.scope_offset_x = 0.;
-                    graphics::set_canvas(ctx, Some(&self.scope_canvas_x));
-                    graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
-                    graphics::set_canvas(ctx, Some(&self.scope_canvas_y));
-                    graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
-                    graphics::set_canvas(ctx, None);
+                    self.scope_y.reset(ctx);
+                    self.scope_x.reset(ctx);
                 }
                 continue
             }
@@ -317,69 +334,15 @@ impl EventHandler<ggez::GameError> for GameState {
 
             //graphics::clear(ctx, Color::from_rgba(0x00, 0x00, 0x00, 0x00));
 
-            fn time_offset(time: Duration) -> f32 {
-                time.as_micros() as f32 / 500.
-            }
-
-            let point_screen = to_screen_coords(&clamp_pos);
-            let point_time_offset = time_offset(poll.time - self.scope_start_time);
-
             //TODO let people change speed of oscilliscope
 
             //TODO get rid of all these magic numbers at some point, stop using "WIDTH" where it doesn't belong
             //refactor setting canvas so I don't have to un set it all the time ditto set_screen_coordinates
             //maybe call draw on canvas not on graphics::
             //break up this function it's waay too big
-            let last_point = self.prev_coords.iter().nth(1).map(|n| (controller::clamp(n.0.0, n.0.1), n.1));
-            if let Some((last_point, last_time)) = last_point {
-                let last_point_screen = to_screen_coords(&last_point);
-                let last_point_time_offset = time_offset(last_time.saturating_duration_since(self.scope_start_time));
 
-                let color = self.plane.get_zone(last_point).fg_color.into();
-
-                self.scope_offset_x = point_time_offset;
-                self.scope_offset_y = point_time_offset;
-                
-                graphics::set_canvas(ctx, Some(&self.scope_canvas_y));
-                graphics::set_screen_coordinates(ctx, Rect::new(0., 0., WIDTH as f32, 440.))?;
-
-                let line_y_coords = [[last_point_time_offset, last_point_screen[1]], [point_time_offset, point_screen[1]]];
-                let line = graphics::Mesh::new_line(ctx, &line_y_coords, 1., color);
-                if let Ok(line) = line {
-                    graphics::draw(ctx, &line, DrawParam::new())?;
-                }
-                let point = Mesh::new_rectangle(ctx, DrawMode::fill(), [last_point_time_offset - 1., last_point_screen[1] - 1., 3., 3.].into(), color)?;
-                graphics::draw(ctx, &point, DrawParam::new())?;
-
-                graphics::set_canvas(ctx, Some(&self.scope_canvas_x));
-                graphics::set_screen_coordinates(ctx, Rect::new(0., 0., 440., WIDTH as f32))?;
-
-                let line_x_coords = [[last_point_screen[0], last_point_time_offset], [point_screen[0], point_time_offset]];
-                let line = graphics::Mesh::new_line(ctx, &line_x_coords, 1., color);
-                if let Ok(line) = line {
-                    graphics::draw(ctx, &line, DrawParam::new())?;
-                }
-                let point = Mesh::new_rectangle(ctx, DrawMode::fill(), [last_point_time_offset - 1., last_point_screen[1] - 1., 3., 3.].into(), color)?;
-                graphics::draw(ctx, &point, DrawParam::new())?;
-                
-                if point_time_offset > 1100. {
-                    self.scope_offset_y_old = point_time_offset;
-                    self.scope_offset_x_old = point_time_offset;
-                    self.scope_start_time = poll.time;
-                    let testrect = Mesh::new_rectangle(ctx, DrawMode::fill(), [0., 0., 5., 5.].into(), Color::RED)?;
-                    std::mem::swap(&mut self.scope_canvas_y, &mut self.scope_canvas_y_old);
-                    std::mem::swap(&mut self.scope_canvas_x, &mut self.scope_canvas_x_old);
-                    graphics::set_canvas(ctx, Some(&self.scope_canvas_x));
-                    graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
-                    graphics::draw(ctx, &testrect, DrawParam::new())?;
-                    graphics::set_canvas(ctx, Some(&self.scope_canvas_y));
-                    graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
-                    graphics::draw(ctx, &testrect, DrawParam::new())?;
-                }
-
-                graphics::set_canvas(ctx, None);
-                graphics::set_screen_coordinates(ctx, Rect::new(0., 0., WIDTH as f32, HEIGHT as f32))?;
-            }
+            self.scope_y.update(ctx, clamp_pos, poll.time)?;
+            self.scope_x.update(ctx, clamp_pos, poll.time)?;
 
         }
         Ok(())
@@ -393,12 +356,12 @@ impl EventHandler<ggez::GameError> for GameState {
 
         graphics::draw(ctx, &self.trail_canvas, DrawParam::new())?;
 
-        graphics::draw(ctx, &self.scope_canvas_y, DrawParam::new().scale([-1., 1.]).offset([440. + self.scope_offset_y, 0.]))?;
-        graphics::draw(ctx, &self.scope_canvas_y_old, DrawParam::new().scale([-1., 1.]).offset([440. + self.scope_offset_y + self.scope_offset_y_old, 0.]))?;
+        self.scope_y.draw(ctx)?;
+        self.scope_x.draw(ctx)?;
 
-        //graphics::draw(ctx, &self.scope_canvas_x, DrawParam::new().offset([0., -440.]))?;
-        graphics::draw(ctx, &self.scope_canvas_x, DrawParam::new().scale([1., -1.]).offset([0., 440. + self.scope_offset_x]))?;
-        graphics::draw(ctx, &self.scope_canvas_x_old, DrawParam::new().scale([1., -1.]).offset([0., 440. + self.scope_offset_x + self.scope_offset_y_old]))?;
+        let (x, y) = self.get_controller().stick_clamp();
+        let coords_text = graphics::Text::new(format!("({:<5}, {:<5})", x, y));
+        graphics::draw(ctx, &coords_text, DrawParam::new())?;
 
         if self.get_controller().stick_clamp() != self.get_controller().stick_pos() {
             let rect = draw_controller_pixel(ctx, &self.get_controller().stick_pos(), Color::RED)?;
@@ -501,9 +464,9 @@ fn poll_loop(device: Device<GlobalContext>, sender: Sender<ControllerPoll>) -> R
         let new_time = Instant::now();
         if new_time - last_print > Duration::from_millis(100) {
             update_controllers(&mut controllers, &buffer);
-            print!("\rbuttons: [{:<30}] stick: [{:<4?}] c: [{:<4?}]", controllers[0].to_string(), controllers[0].stick_clamp(), controllers[0].c_stick_clamp());
-            print!("p2: [{:<30}] stick: [{:<4?}] c: [{:<4?}]", controllers[1].to_string(), controllers[1].stick_clamp(), controllers[1].c_stick_clamp());
-            print!("time: {}", time_diff);
+            print!("\rbtns: [{:<20}] stk: [{:<4?}] c: [{:<4?}]", controllers[0].to_string(), controllers[0].stick_clamp(), controllers[0].c_stick_clamp());
+            print!("p2: [{:<20}] stk: [{:<4?}] c: [{:<4?}]", controllers[1].to_string(), controllers[1].stick_clamp(), controllers[1].c_stick_clamp());
+            print!("time: {:>4}", time_diff);
             std::io::stdout().flush()?;
             last_print = new_time;
         }
