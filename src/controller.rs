@@ -22,10 +22,10 @@ pub fn clamp(x_in: i8, y_in: i8) -> (i8, i8) {
 pub struct Controller {
     buffer: [u8; 8],
     buffer_last: [u8; 8],
-    startx: u8,
-    starty: u8,
-    c_startx: u8,
-    c_starty: u8,
+    startx: i8,
+    starty: i8,
+    c_startx: i8,
+    c_starty: i8,
 }
 
 pub struct Button {
@@ -58,10 +58,10 @@ impl Controller {
 
     fn from_buffer(&mut self, buffer: &[u8]) {
         if self.buffer[2..6] == [0; 4] && buffer[2..6] != [0; 4] {
-            self.startx = buffer[2];
-            self.starty = buffer[3];
-            self.c_startx = buffer[4];
-            self.c_starty = buffer[5];
+            self.startx = (buffer[2] as i8).wrapping_sub(-128);
+            self.starty = (buffer[3] as i8).wrapping_sub(-128);
+            self.c_startx = (buffer[4] as i8).wrapping_sub(-128);
+            self.c_starty = (buffer[5] as i8).wrapping_sub(-128);
             println!("setting start pos's {} {} {} {}", self.startx, self.starty, self.c_startx, self.c_starty);
         }
         self.buffer_last = self.buffer;
@@ -88,11 +88,19 @@ impl Controller {
     }
     
     pub fn stick_pos(&self) -> (i8, i8) {
-        (self.buffer[2].wrapping_sub(self.startx) as i8, self.buffer[3].wrapping_sub(self.starty) as i8)
+        let (x, y) = self.stick_raw();
+        (
+            x.saturating_sub(self.startx),
+            y.saturating_sub(self.starty)
+        )
     }
 
     pub fn c_stick_pos(&self) -> (i8, i8) {
-        (self.buffer[4].wrapping_sub(self.c_startx) as i8, self.buffer[5].wrapping_sub(self.c_starty) as i8)
+        let (x, y) = self.c_stick_raw();
+        (
+            x.saturating_sub(self.c_startx),
+            y.saturating_sub(self.c_starty)
+        )
     }
 
     pub fn stick_clamp(&self) -> (i8, i8) {
@@ -105,6 +113,13 @@ impl Controller {
         clamp(pos.0, pos.1)
     }
 
+    pub fn stick_raw(&self) -> (i8, i8) {
+        ((self.buffer[2] as i8).wrapping_sub(-128), (self.buffer[3] as i8).wrapping_sub(-128))
+    }
+
+    pub fn c_stick_raw(&self) -> (i8, i8) {
+        ((self.buffer[4] as i8).wrapping_sub(-128), (self.buffer[5] as i8).wrapping_sub(-128))
+    }
 }
 
 impl ToString for Controller {
