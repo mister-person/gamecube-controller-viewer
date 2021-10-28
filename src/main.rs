@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::time::Instant;
 
 use std::thread;
@@ -26,6 +27,13 @@ use gc_adapter::start_adapter_polling;
 
 mod stick_display;
 use stick_display::StickDisplay;
+
+mod button_display;
+
+use crate::oscilloscope::Scope;
+
+mod button_scope;
+use button_scope::ButtonScope;
 
 const WIDTH: u16 = 1600;
 const HEIGHT: u16 = 1000;
@@ -66,6 +74,8 @@ struct GameState {
     scope_y: Oscilloscope,
     scope_x: Oscilloscope,
 
+    button_scope: ButtonScope,
+
     stick_pos_format: StickPosFormat,
 }
 
@@ -91,6 +101,7 @@ impl GameState {
             stick_display: StickDisplay::new(ctx, 440, 440)?,
             c_stick_display,
             stick_pos_format: StickPosFormat::Integer,
+            button_scope: ButtonScope::new(ctx, 1000, 180, ScopeDirection::Horizontal)?,
         })
     }
 }
@@ -130,6 +141,11 @@ impl EventHandler<ggez::GameError> for GameState {
             }
             else if self.get_controller().just_pressed(&controller::START_BUTTON) {
                 self.paused = true;
+            }
+
+            let buttons = self.get_controller().buffer[0..2].try_into();
+            if let Ok(buttons) = buttons {
+                self.button_scope.update(ctx, buttons, poll.time)?;
             }
 
             let stick_pos = self.get_controller().stick_pos();
@@ -187,44 +203,37 @@ impl EventHandler<ggez::GameError> for GameState {
 
         self.c_stick_display.draw(ctx, 400., 400.)?;
 
-        self.scope_y.draw(ctx)?;
-        self.scope_x.draw(ctx)?;
+        self.button_scope.draw(ctx, 440., 660.)?;
+
+        button_display::draw_buttons(ctx, &self.get_controller(), 410., 660., button_display::LINE_LAYOUT)?;
+
+        self.scope_y.draw(ctx, 440., 0.)?;
+        self.scope_x.draw(ctx, 0., 440.)?;
+
+        let get_text_from_coords = |x, y| {
+            let (x, y) = match self.stick_pos_format {
+                StickPosFormat::Integer => (x as f64, y as f64),
+                StickPosFormat::Decimal => (x as f64 / 80., y as f64 / 80.),
+            };
+            let mx = if x < 0.0 {'-'} else {' '};
+            let my = if y < 0.0 {'-'} else {' '};
+            graphics::Text::new(format!("({}{:<6}, {}{:<6})", mx, x.abs(), my, y.abs()))
+        };
 
         let (x, y) = self.get_controller().stick_clamp();
-        let (x, y) = match self.stick_pos_format {
-            StickPosFormat::Integer => (x as f64, y as f64),
-            StickPosFormat::Decimal => (x as f64 / 80., y as f64 / 80.),
-        };
-        let coords_text = graphics::Text::new(format!("({:<7}, {:<7})", x, y));
-        graphics::draw(ctx, &coords_text, DrawParam::new())?;
+        graphics::draw(ctx, &get_text_from_coords(x, y), DrawParam::new())?;
 
         let (real_x, real_y) = self.get_controller().stick_pos();
-        let (real_x, real_y) = match self.stick_pos_format {
-            StickPosFormat::Integer => (real_x as f64, real_y as f64),
-            StickPosFormat::Decimal => (real_x as f64 / 80., real_y as f64 / 80.),
-        };
         if (real_x, real_y) != (x, y) {
-            let coords_text = graphics::Text::new(format!("({:<7}, {:<7})", real_x, real_y));
-            graphics::draw(ctx, &coords_text, DrawParam::new().dest([0., 15.]).color(Color::RED))?;
+            graphics::draw(ctx, &get_text_from_coords(real_x, real_y), DrawParam::new().dest([0., 15.]).color(Color::RED))?;
         }
 
-        graphics::set_screen_coordinates(ctx, Rect::new(0., 0., WIDTH as f32, HEIGHT as f32))?;
         let (x, y) = self.get_controller().c_stick_clamp();
-        let (x, y) = match self.stick_pos_format {
-            StickPosFormat::Integer => (x as f64, y as f64),
-            StickPosFormat::Decimal => (x as f64 / 80., y as f64 / 80.),
-        };
-        let coords_text = graphics::Text::new(format!("({:<7}, {:<7})", x, y));
-        graphics::draw(ctx, &coords_text, DrawParam::new().dest([400., 400.]).color(Color::from_rgb(0xff, 0xff, 0x00)))?;
+        graphics::draw(ctx, &get_text_from_coords(x, y), DrawParam::new().dest([400., 400.]).color(Color::from_rgb(0xff, 0xff, 0x00)))?;
 
         let (real_x, real_y) = self.get_controller().c_stick_pos();
-        let (real_x, real_y) = match self.stick_pos_format {
-            StickPosFormat::Integer => (real_x as f64, real_y as f64),
-            StickPosFormat::Decimal => (real_x as f64 / 80., real_y as f64 / 80.),
-        };
         if (real_x, real_y) != (x, y) {
-            let coords_text = graphics::Text::new(format!("({:<7}, {:<7})", real_x, real_y));
-            graphics::draw(ctx, &coords_text, DrawParam::new().dest([400., 415.]).color(Color::from_rgb(0xc0, 0xc0, 0x00)))?;
+            graphics::draw(ctx, &get_text_from_coords(real_x, real_y), DrawParam::new().dest([400., 415.]).color(Color::from_rgb(0xc0, 0xc0, 0x00)))?;
         }
 
         let (raw_x, raw_y) = self.get_controller().stick_raw();

@@ -1,3 +1,5 @@
+use std::convert::TryInto;
+
 /*
 //ty altimor!!
 let magnitude = Math.sqrt(x*x + y*y);
@@ -20,7 +22,7 @@ pub fn clamp(x_in: i8, y_in: i8) -> (i8, i8) {
 
 #[derive(Clone, Copy)]
 pub struct Controller {
-    buffer: [u8; 8],
+    pub buffer: [u8; 8],
     buffer_last: [u8; 8],
     startx: i8,
     starty: i8,
@@ -48,7 +50,7 @@ pub const Z_BUTTON: Button = Button { index: 1, mask: 0x2, name: "Z" };
 pub const R_BUTTON: Button = Button { index: 1, mask: 0x4, name: "R" };
 pub const L_BUTTON: Button = Button { index: 1, mask: 0x8, name: "L" };
 
-const BUTTONS: [Button; 12] = [A_BUTTON, B_BUTTON, X_BUTTON, Y_BUTTON, D_LEFT_BUTTON, D_RIGHT_BUTTON, D_UP_BUTTON, D_DOWN_BUTTON, START_BUTTON, Z_BUTTON, R_BUTTON, L_BUTTON];
+pub const BUTTONS: [Button; 12] = [A_BUTTON, B_BUTTON, X_BUTTON, Y_BUTTON, D_LEFT_BUTTON, D_RIGHT_BUTTON, D_UP_BUTTON, D_DOWN_BUTTON, START_BUTTON, Z_BUTTON, R_BUTTON, L_BUTTON];
 
 impl Controller {
     pub fn new() -> Controller {
@@ -56,7 +58,7 @@ impl Controller {
         c
     }
 
-    fn from_buffer(&mut self, buffer: &[u8]) {
+    pub fn from_buffer(&mut self, buffer: &[u8; 8]) {
         if self.buffer[2..6] == [0; 4] && buffer[2..6] != [0; 4] {
             self.startx = (buffer[2] as i8).wrapping_sub(-128);
             self.starty = (buffer[3] as i8).wrapping_sub(-128);
@@ -128,10 +130,10 @@ impl ToString for Controller {
     }
 }
 
-pub fn update_controllers(controllers: &mut [Controller], buffer: &[u8]) {
+pub fn update_controllers(controllers: &mut [Controller], buffer: &[u8; 37]) {
     let mut index = 2;
     for controller in controllers {
-        controller.from_buffer(&buffer[index..(index+8)]);
+        controller.from_buffer(&buffer[index..(index+8)].try_into().unwrap());//TODO unwrap
         index += 9;
     }
 }

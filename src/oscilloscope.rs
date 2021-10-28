@@ -2,7 +2,17 @@ use std::time::{Duration, Instant};
 
 use ggez::{Context, GameResult, graphics::{self, Canvas, Color, DrawMode, DrawParam, Mesh, Rect, get_window_color_format}};
 
-use crate::{HEIGHT, WIDTH, zones};
+use crate::zones;
+
+pub trait Scope {
+    type Data;
+
+    fn update(&mut self, ctx: &mut Context, new_item: Self::Data, time: Instant) -> GameResult<()>;
+    fn draw(&self, ctx: &mut Context, x: f32, y: f32) -> GameResult<()>;
+    fn reset(&mut self, ctx: &mut Context);
+
+    fn get_time_from_pos(&mut self, x: f32, y: f32) -> Option<Instant>;
+}
 
 pub struct ScopePoint {
     point: (i8, i8),
@@ -43,8 +53,13 @@ impl Oscilloscope {
             direction,
         })
     }
+}
     
-    pub fn update(&mut self, ctx: &mut Context, new_point: (i8, i8), time: Instant) -> GameResult<()> {
+impl Scope for Oscilloscope {
+    type Data = (i8, i8);
+
+    fn update(&mut self, ctx: &mut Context, new_point: (i8, i8), time: Instant) -> GameResult<()> {
+        //maybe move to trait?
         fn time_offset(time: Duration) -> f32 {
             time.as_micros() as f32 / 1000.
         }
@@ -55,7 +70,7 @@ impl Oscilloscope {
 
         //TODO let people change speed of oscilloscope
 
-        //TODO get rid of all these magic numbers at some point, stop using "WIDTH" where it doesn't belong
+        //TODO get rid of all these magic numbers at some point, 
         //refactor setting canvas so I don't have to un set it all the time ditto set_screen_coordinates
         //break up this function it's waay too big
         let last_point = &self.last_point;
@@ -102,27 +117,27 @@ impl Oscilloscope {
         Ok(())
     }
     
-    pub fn draw(&self, ctx: &mut Context) -> GameResult<()> {
+    fn draw(&self, ctx: &mut Context, x: f32, y: f32) -> GameResult<()> {
         //TODO ability to translate, pass in coords maybe?
         let scale;
         let offset;
         let offset2;
         if self.direction == ScopeDirection::Horizontal {
             scale = [-1., 1.];
-            offset = [440. + self.scope_offset, 0.];
-            offset2 = [440. + self.scope_offset + self.scope_offset_old, 0.];
+            offset = [x + self.scope_offset, y];
+            offset2 = [x + self.scope_offset + self.scope_offset_old, y];
         }
         else {
             scale = [1., -1.];
-            offset = [0., 440. + self.scope_offset];
-            offset2 = [0., 440. + self.scope_offset + self.scope_offset_old];
+            offset = [x, y + self.scope_offset];
+            offset2 = [x, y + self.scope_offset + self.scope_offset_old];
         }
         graphics::draw(ctx, &self.scope_canvas, DrawParam::new().scale(scale).offset(offset))?;
         graphics::draw(ctx, &self.scope_canvas_old, DrawParam::new().scale(scale).offset(offset2))?;
         Ok(())
     }
 
-    pub fn reset(&mut self, ctx: &mut Context) {
+    fn reset(&mut self, ctx: &mut Context) {
         self.scope_start_time = Instant::now();//this might not work
         self.scope_offset = 0.;
         self.last_point = None;
@@ -131,6 +146,10 @@ impl Oscilloscope {
         graphics::set_canvas(ctx, Some(&self.scope_canvas_old));
         graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
         graphics::set_canvas(ctx, None);
+    }
+
+    fn get_time_from_pos(&mut self, x: f32, y: f32) -> Option<Instant> {
+        None
     }
 }
 
