@@ -14,6 +14,7 @@ pub trait Scope {
     fn get_time_from_pos(&mut self, x: f32, y: f32) -> Option<Instant>;
 }
 
+#[derive(Clone, Copy)]
 pub struct ScopePoint {
     point: (i8, i8),
     time: Instant,
@@ -24,7 +25,7 @@ pub enum ScopeDirection {
     Horizontal,
 }
 pub struct Oscilloscope {
-    scope_start_time: Instant,
+    pub scope_start_time: Instant,
     scope_canvas: Canvas,
     scope_canvas_old: Canvas,
     scope_offset: f32,
@@ -40,6 +41,11 @@ impl Oscilloscope {
     pub fn new(ctx: &mut Context, width: u16, height: u16, direction: ScopeDirection) -> GameResult<Self> {
         let scope_canvas = Canvas::new(ctx, width, height, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
         let scope_canvas_old = Canvas::new(ctx, width, height, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
+        graphics::set_canvas(ctx, Some(&scope_canvas));
+        graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
+        graphics::set_canvas(ctx, Some(&scope_canvas_old));
+        graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
+        graphics::set_canvas(ctx, None);
         Ok(Oscilloscope {
             scope_canvas,
             scope_canvas_old,
@@ -53,6 +59,29 @@ impl Oscilloscope {
             direction,
         })
     }
+
+    fn time_offset(time: Duration) -> f32 {
+        time.as_micros() as f32 / 1000.
+    }
+
+    fn time_offset_rev(pos: f32) -> Duration {
+        Duration::from_micros((pos * 1000.).floor() as u64)
+    }
+
+    pub fn draw_line_at_time(&self, ctx: &mut Context, time: Instant, x: f32, y: f32) -> GameResult<()> {
+        let now = match self.last_point {
+            Some(point) => point.time,
+            None => self.scope_start_time,
+        };
+        let offset = Oscilloscope::time_offset(now.saturating_duration_since(time));
+        let line_coords = match self.direction {
+            ScopeDirection::Vertical => [[x, y + offset], [x + self.canvas_width as f32, y + offset]],
+            ScopeDirection::Horizontal => [[x + offset, y], [x + offset, y + self.canvas_height as f32]],
+        };
+        let line = Mesh::new_line(ctx, &line_coords, 1.0, Color::WHITE)?;
+        graphics::draw(ctx, &line, DrawParam::new())?;
+        Ok(())
+    }
 }
     
 impl Scope for Oscilloscope {
@@ -60,13 +89,10 @@ impl Scope for Oscilloscope {
 
     fn update(&mut self, ctx: &mut Context, new_point: (i8, i8), time: Instant) -> GameResult<()> {
         //maybe move to trait?
-        fn time_offset(time: Duration) -> f32 {
-            time.as_micros() as f32 / 1000.
-        }
 
         //TODO this assumes canvas height
         let point_screen = to_screen_coords(&new_point);
-        let point_time_offset = time_offset(time.saturating_duration_since(self.scope_start_time));
+        let point_time_offset = Oscilloscope::time_offset(time.saturating_duration_since(self.scope_start_time));
 
         //TODO let people change speed of oscilloscope
 
@@ -76,7 +102,7 @@ impl Scope for Oscilloscope {
         let last_point = &self.last_point;
         if let Some(ScopePoint { point: last_point, time: last_time }) = last_point {
             let last_point_screen = to_screen_coords(&last_point);
-            let last_point_time_offset = time_offset(last_time.saturating_duration_since(self.scope_start_time));
+            let last_point_time_offset = Oscilloscope::time_offset(last_time.saturating_duration_since(self.scope_start_time));
 
             let color = self.plane.get_zone(*last_point).fg_color.into();
 
@@ -148,7 +174,21 @@ impl Scope for Oscilloscope {
         graphics::set_canvas(ctx, None);
     }
 
+    //TODO deduplicate these
     fn get_time_from_pos(&mut self, x: f32, y: f32) -> Option<Instant> {
+        let (value, orthogonal_val) = match self.direction { ScopeDirection::Horizontal => (x, y), ScopeDirection::Vertical => (y, x), };
+        let (max, orthogonal_max) = match self.direction {
+            ScopeDirection::Horizontal => (self.canvas_width, self.canvas_height),
+            ScopeDirection::Vertical => (self.canvas_height, self.canvas_width),
+        };
+        if value >= 0. && value < max as f32 && orthogonal_val >= 0. && orthogonal_val < orthogonal_max as f32 {
+            let now = match self.last_point {
+                Some(point) => point.time,
+                None => self.scope_start_time,
+            };
+            let time = Oscilloscope::time_offset_rev(value);
+            return Some(now - time)
+        }
         None
     }
 }

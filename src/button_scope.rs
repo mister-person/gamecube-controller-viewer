@@ -16,6 +16,7 @@ pub struct ButtonScope {
     canvas_width: u16,
     canvas_height: u16,
     direction: ScopeDirection,//TODO
+    latest_time: Instant,
 }
 
 pub const BUTTON_COLORS: [Color; 12] = [
@@ -37,6 +38,11 @@ impl ButtonScope {
     pub fn new(ctx: &mut Context, width: u16, height: u16, direction: ScopeDirection) -> GameResult<Self> {
         let scope_canvas = Canvas::new(ctx, width, height, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
         let scope_canvas_old = Canvas::new(ctx, width, height, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
+        graphics::set_canvas(ctx, Some(&scope_canvas));
+        graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
+        graphics::set_canvas(ctx, Some(&scope_canvas_old));
+        graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
+        graphics::set_canvas(ctx, None);
         Ok(ButtonScope {
             scope_canvas,
             scope_canvas_old,
@@ -49,7 +55,12 @@ impl ButtonScope {
             direction,
             controller: Controller::new(),
             button_order: vec![0, 1, 2, 3, 9, 10, 11, 6],
+            latest_time: Instant::now(),
         })
+    }
+
+    fn time_offset_rev(pos: f32) -> Duration {
+        Duration::from_micros((pos * 1000.).floor() as u64)
     }
 
     fn time_offset(time: Duration) -> f32 {
@@ -82,6 +93,7 @@ impl Scope for ButtonScope {
         let mut buffer = [0; 8];
         buffer[0..2].copy_from_slice(&new_item);
         self.controller.from_buffer(&buffer);
+        self.latest_time = time;
 
         for (i, button) in self.button_order.iter().enumerate() {
             if self.controller.just_pressed(&BUTTONS[*button]) {
@@ -140,6 +152,16 @@ impl Scope for ButtonScope {
     }
 
     fn get_time_from_pos(&mut self, x: f32, y: f32) -> Option<Instant> {
+        let (value, orthogonal_val) = match self.direction { ScopeDirection::Horizontal => (x, y), ScopeDirection::Vertical => (y, x), };
+        let (max, orthogonal_max) = match self.direction {
+            ScopeDirection::Horizontal => (self.canvas_width, self.canvas_height),
+            ScopeDirection::Vertical => (self.canvas_height, self.canvas_width),
+        };
+        if value >= 0. && value < max as f32 && orthogonal_val >= 0. && orthogonal_val < orthogonal_max as f32 {
+            let time = ButtonScope::time_offset_rev(value);
+            let now = self.latest_time;
+            return Some(now - time)
+        }
         None
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::{Duration, Instant}};
 
 use ggez::{Context, GameResult, graphics::{self, BlendMode, Canvas, Color, DrawMode, DrawParam, Drawable, Mesh, Rect, get_window_color_format}};
 
@@ -10,6 +10,7 @@ pub struct StickDisplay {
     pub background_canvas: Canvas,
     pub trail_canvas: Canvas,
 
+    background_progress_x: i8,
     background_updated: bool,
 
     width: f32,
@@ -28,6 +29,7 @@ impl StickDisplay {
             background_canvas,
             trail_canvas,
             prev_coords_counter: BTreeMap::new(),
+            background_progress_x: -80,
             background_updated: false,
             width: width as f32,
             height: height as f32,
@@ -37,12 +39,22 @@ impl StickDisplay {
     pub fn update_background(&mut self, ctx: &mut Context) -> GameResult<()> {
         graphics::set_screen_coordinates(ctx, Rect::new(0., 0., self.width as f32, self.height as f32))?;
         graphics::set_canvas(ctx, Some(&self.background_canvas));
-        for x in -80..=80 {
+        let start_time = Instant::now();
+        for x in self.background_progress_x..=80 {
             for y in -80..=80 {
                 if controller::clamp(x, y) == (x, y) {
                     let color = self.plane.get_zone((x, y)).bg_color.into();
+                    //let color = Color::GREEN;
                     let rect = self.draw_controller_pixel(ctx, &(x, y), color)?;
                     graphics::draw(ctx, &rect, DrawParam::new())?;
+
+                    //small hack to not draw it all at once, apparently drawing
+                    //lots of squares is slooow
+                    if Instant::now() - start_time > Duration::from_millis(3) {
+                        self.background_progress_x = x;//off by one?
+                        reset_graphics(ctx)?;
+                        return Ok(())
+                    }
                 }
             }
         }

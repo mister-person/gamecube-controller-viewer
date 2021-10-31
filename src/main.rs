@@ -1,14 +1,15 @@
 use std::convert::TryInto;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use std::thread;
 use std::sync::mpsc::{channel, Receiver};
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
+use ggez::input::mouse;
 use ggez::{Context, ContextBuilder, GameResult};
 use ggez::conf::WindowMode;
-use ggez::graphics::{self, Color, DrawParam, Rect};
+use ggez::graphics::{self, Color, DrawParam, Rect, Text};
 use ggez::event::{self, EventHandler};
 
 mod controller;
@@ -66,6 +67,8 @@ struct GameState {
     prev_coords: VecDeque<((i8, i8), Instant)>,
     c_prev_coords: VecDeque<((i8, i8), Instant)>,
 
+    prev_input_map: BTreeMap<Instant, [u8; 8]>,
+
     paused: bool,
 
     stick_display: StickDisplay,
@@ -82,6 +85,15 @@ struct GameState {
 impl GameState {
     pub fn get_controller(&self) -> Controller {
         self.controllers[self.current_controller]
+    }
+
+    pub fn get_inputs_at_time(&self, time: Instant) -> [u8; 8] {
+        if let Some(inputs) = self.prev_input_map.range(time..).next() {
+            inputs.1.to_owned()
+        }
+        else {
+            [0; 8]
+        }
     }
 
     pub fn new(ctx: &mut Context, receiver: Receiver<ControllerPoll>) -> GameResult<GameState> {
@@ -102,6 +114,7 @@ impl GameState {
             c_stick_display,
             stick_pos_format: StickPosFormat::Integer,
             button_scope: ButtonScope::new(ctx, 1000, 180, ScopeDirection::Horizontal)?,
+            prev_input_map: BTreeMap::new(),
         })
     }
 }
@@ -115,6 +128,15 @@ impl EventHandler<ggez::GameError> for GameState {
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => panic!("couldn't read from adapter"),
             };
             update_controllers(&mut self.controllers, &poll.buffer);
+
+            if !self.paused {
+                self.prev_input_map.insert(poll.time, self.get_controller().buffer);
+                if self.prev_input_map.len() > 5000 {//TODO magic number
+                    let (first, _) = self.prev_input_map.iter().next().unwrap();
+                    let first = first.clone();
+                    self.prev_input_map.remove(&first);
+                }
+            }
 
             for (i, controller) in self.controllers.iter().enumerate() {
                 if controller.is_down(&controller::A_BUTTON) && i != self.current_controller {
@@ -210,6 +232,26 @@ impl EventHandler<ggez::GameError> for GameState {
         self.scope_y.draw(ctx, 440., 0.)?;
         self.scope_x.draw(ctx, 0., 440.)?;
 
+        let mouse_pos = mouse::position(ctx);
+        let mut instant = None;
+        instant = instant.or_else(|| self.scope_y.get_time_from_pos(mouse_pos.x - 440., mouse_pos.y));
+        instant = instant.or_else(|| self.scope_x.get_time_from_pos(mouse_pos.x, mouse_pos.y - 440.));
+        instant = instant.or_else(|| self.button_scope.get_time_from_pos(mouse_pos.x - 440., mouse_pos.y - 660.));
+        if let Some(instant) = instant {
+            graphics::draw(ctx, &Text::new(self.scope_y.scope_start_time.saturating_duration_since(instant).as_millis().to_string()), DrawParam::new().dest([200., 0.]))?;
+            self.scope_y.draw_line_at_time(ctx, instant, 440., 0.)?;
+            self.scope_x.draw_line_at_time(ctx, instant, 0., 440.)?;
+
+            let mut controller = self.get_controller().clone();
+            controller.from_buffer(&self.get_inputs_at_time(instant));
+            let point = controller.stick_clamp();
+            for x in -1..=1 {
+                for y in -1..=1 {
+                    self.stick_display.draw_point(ctx, (point.0 + x, point.1 + y), if x == 0 && y == 0 {Color::BLACK} else {Color::WHITE})?;
+                }
+            }
+        }
+
         let get_text_from_coords = |x, y| {
             let (x, y) = match self.stick_pos_format {
                 StickPosFormat::Integer => (x as f64, y as f64),
@@ -239,6 +281,9 @@ impl EventHandler<ggez::GameError> for GameState {
         let (raw_x, raw_y) = self.get_controller().stick_raw();
         let coords_text = graphics::Text::new(format!("({:<5}, {:<5})", raw_x, raw_y));
         graphics::draw(ctx, &coords_text, DrawParam::new().dest([0., 30.]).color(Color::BLUE))?;
+
+        let fps_text = graphics::Text::new(format!("(fpx: {})", ggez::timer::fps(ctx)));
+        graphics::draw(ctx, &fps_text, DrawParam::new().dest([250., 0.]).color(Color::WHITE))?;
 
         graphics::present(ctx)
     }

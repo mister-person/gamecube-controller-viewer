@@ -64,7 +64,7 @@ impl Controller {
             self.starty = (buffer[3] as i8).wrapping_sub(-128);
             self.c_startx = (buffer[4] as i8).wrapping_sub(-128);
             self.c_starty = (buffer[5] as i8).wrapping_sub(-128);
-            println!("setting start pos's {} {} {} {}", self.startx, self.starty, self.c_startx, self.c_starty);
+            //println!("setting start pos's {} {} {} {}", self.startx, self.starty, self.c_startx, self.c_starty);
         }
         self.buffer_last = self.buffer;
         self.buffer.copy_from_slice(buffer);
