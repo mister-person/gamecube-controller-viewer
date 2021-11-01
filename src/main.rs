@@ -1,5 +1,5 @@
 use std::convert::TryInto;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use std::thread;
 use std::sync::mpsc::{channel, Receiver};
@@ -97,8 +97,9 @@ impl GameState {
     }
 
     pub fn new(ctx: &mut Context, receiver: Receiver<ControllerPoll>) -> GameResult<GameState> {
-        let oscilloscope_y = Oscilloscope::new(ctx, 1500, 440, ScopeDirection::Horizontal)?;
-        let oscilloscope_x = Oscilloscope::new(ctx, 400, 1500, ScopeDirection::Vertical)?;
+        let oscilloscope_y = Oscilloscope::new(ctx, 440., 0., 1500., 400., ScopeDirection::Horizontal)?;
+        let oscilloscope_x = Oscilloscope::new(ctx, 0., 440., 400., 1500., ScopeDirection::Vertical)?;
+        let button_scope = ButtonScope::new(ctx, 440., 660., 1000., 180., ScopeDirection::Horizontal)?;
         let mut c_stick_display = StickDisplay::new(ctx, 220, 220)?;
         c_stick_display.set_plane(Box::new(zones::CStick {}));
         Ok(GameState {
@@ -113,7 +114,7 @@ impl GameState {
             stick_display: StickDisplay::new(ctx, 440, 440)?,
             c_stick_display,
             stick_pos_format: StickPosFormat::Integer,
-            button_scope: ButtonScope::new(ctx, 1000, 180, ScopeDirection::Horizontal)?,
+            button_scope,
             prev_input_map: BTreeMap::new(),
         })
     }
@@ -225,22 +226,23 @@ impl EventHandler<ggez::GameError> for GameState {
 
         self.c_stick_display.draw(ctx, 400., 400.)?;
 
-        self.button_scope.draw(ctx, 440., 660.)?;
+        self.button_scope.draw(ctx)?;
 
         button_display::draw_buttons(ctx, &self.get_controller(), 410., 660., button_display::LINE_LAYOUT)?;
 
-        self.scope_y.draw(ctx, 440., 0.)?;
-        self.scope_x.draw(ctx, 0., 440.)?;
+        self.scope_y.draw(ctx)?;
+        self.scope_x.draw(ctx)?;
 
         let mouse_pos = mouse::position(ctx);
         let mut instant = None;
-        instant = instant.or_else(|| self.scope_y.get_time_from_pos(mouse_pos.x - 440., mouse_pos.y));
-        instant = instant.or_else(|| self.scope_x.get_time_from_pos(mouse_pos.x, mouse_pos.y - 440.));
-        instant = instant.or_else(|| self.button_scope.get_time_from_pos(mouse_pos.x - 440., mouse_pos.y - 660.));
+        instant = instant.or_else(|| self.scope_y.get_time_from_pos(mouse_pos.x, mouse_pos.y));
+        instant = instant.or_else(|| self.scope_x.get_time_from_pos(mouse_pos.x, mouse_pos.y));
+        instant = instant.or_else(|| self.button_scope.get_time_from_pos(mouse_pos.x, mouse_pos.y));
         if let Some(instant) = instant {
             graphics::draw(ctx, &Text::new(self.scope_y.scope_start_time.saturating_duration_since(instant).as_millis().to_string()), DrawParam::new().dest([200., 0.]))?;
-            self.scope_y.draw_line_at_time(ctx, instant, 440., 0.)?;
-            self.scope_x.draw_line_at_time(ctx, instant, 0., 440.)?;
+            self.scope_y.draw_line_at_time(ctx, instant)?;
+            self.scope_x.draw_line_at_time(ctx, instant)?;
+            self.button_scope.draw_line_at_time(ctx, instant)?;
 
             let mut controller = self.get_controller().clone();
             controller.from_buffer(&self.get_inputs_at_time(instant));

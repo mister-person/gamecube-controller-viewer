@@ -1,12 +1,10 @@
-use std::collections::{HashMap, HashSet};
-
-use ggez::{Context, GameResult, graphics::{self, Canvas, Color, DrawMode, DrawParam, Mesh, Text, get_window_color_format}};
+use ggez::{Context, GameResult, graphics::{self, Color, DrawMode, DrawParam, Mesh, Text}};
 
 use crate::{button_scope::BUTTON_COLORS, controller::{self, Controller}};
 
 type Layout = [(controller::Button, char, [f32; 2], usize); 8];
 
-pub const GC_LAYOUT: Layout = [
+pub const _GC_LAYOUT: Layout = [
     (controller::A_BUTTON, 'A', [40., 60.], 1),
     (controller::B_BUTTON, 'B', [20., 70.], 2),
     (controller::X_BUTTON, 'X', [60., 50.], 3),

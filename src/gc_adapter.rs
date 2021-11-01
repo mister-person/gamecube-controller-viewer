@@ -1,9 +1,8 @@
-use std::fs::File;
 use std::io::Write;
 use std::time::{Duration, Instant};
 use std::sync::mpsc::Sender;
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 
 use nix::libc;
 use rusb::{Device, DeviceHandle, GlobalContext};

@@ -47,15 +47,16 @@ impl StickDisplay {
                     //let color = Color::GREEN;
                     let rect = self.draw_controller_pixel(ctx, &(x, y), color)?;
                     graphics::draw(ctx, &rect, DrawParam::new())?;
-
-                    //small hack to not draw it all at once, apparently drawing
-                    //lots of squares is slooow
-                    if Instant::now() - start_time > Duration::from_millis(3) {
-                        self.background_progress_x = x;//off by one?
-                        reset_graphics(ctx)?;
-                        return Ok(())
-                    }
                 }
+
+            }
+
+            //small hack to not draw it all at once, apparently drawing
+            //lots of squares is slooow
+            if Instant::now() - start_time > Duration::from_millis(3) {
+                self.background_progress_x = x;//off by one?
+                reset_graphics(ctx)?;
+                return Ok(())
             }
         }
         self.background_updated = true;

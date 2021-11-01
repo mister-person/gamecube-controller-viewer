@@ -1,21 +1,15 @@
 use std::time::{Duration, Instant};
 
-use ggez::{Context, GameResult, graphics::{self, Canvas, Color, DrawMode, DrawParam, Mesh, get_window_color_format}};
+use ggez::{Context, GameResult, graphics::{self, Color, DrawMode, DrawParam, Mesh}};
 
-use crate::{controller::{BUTTONS, Controller}, oscilloscope::{Scope, ScopeDirection}, reset_graphics};
+use crate::{controller::{BUTTONS, Controller}, oscilloscope::{Scope, ScopeCanvas, ScopeDirection}, reset_graphics};
 
 pub struct ButtonScope {
+    scope_canvas: ScopeCanvas,
     scope_start_time: Instant,
-    scope_canvas: Canvas,
-    scope_canvas_old: Canvas,
-    scope_offset: f32,
-    scope_offset_old: f32,
     controller: Controller,
     last_buttons: [Option<Instant>; 12],
     button_order: Vec<usize>,
-    canvas_width: u16,
-    canvas_height: u16,
-    direction: ScopeDirection,//TODO
     latest_time: Instant,
 }
 
@@ -35,24 +29,11 @@ pub const BUTTON_COLORS: [Color; 12] = [
 ];
 
 impl ButtonScope {
-    pub fn new(ctx: &mut Context, width: u16, height: u16, direction: ScopeDirection) -> GameResult<Self> {
-        let scope_canvas = Canvas::new(ctx, width, height, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
-        let scope_canvas_old = Canvas::new(ctx, width, height, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
-        graphics::set_canvas(ctx, Some(&scope_canvas));
-        graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
-        graphics::set_canvas(ctx, Some(&scope_canvas_old));
-        graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
-        graphics::set_canvas(ctx, None);
+    pub fn new(ctx: &mut Context, x: f32, y: f32, width: f32, height: f32, direction: ScopeDirection) -> GameResult<Self> {
         Ok(ButtonScope {
-            scope_canvas,
-            scope_canvas_old,
+            scope_canvas: ScopeCanvas::new(ctx, x, y, width, height, direction)?,
             scope_start_time: Instant::now(),
-            scope_offset: 0.,
-            scope_offset_old: 0.,
             last_buttons: Default::default(),
-            canvas_width: width,
-            canvas_height: height,
-            direction,
             controller: Controller::new(),
             button_order: vec![0, 1, 2, 3, 9, 10, 11, 6],
             latest_time: Instant::now(),
@@ -74,14 +55,18 @@ impl ButtonScope {
     }
 
     fn draw_to_canvas(&self, ctx: &mut Context, from: Instant, to: Instant, button_index: usize) -> GameResult<()> {
-        graphics::set_canvas(ctx, Some(&self.scope_canvas));
-        graphics::set_screen_coordinates(ctx, [0., 0., self.canvas_width as f32, self.canvas_height as f32].into())?;
         let rect = self.get_rect(ctx, button_index, to.saturating_duration_since(from))?;
         let offset = ButtonScope::time_offset(from.saturating_duration_since(self.scope_start_time));
         graphics::draw(ctx, &rect, DrawParam::new().dest([offset, 0.]))?;
-
-        reset_graphics(ctx)?;
         
+        Ok(())
+    }
+
+    pub fn draw_line_at_time(&self, ctx: &mut Context, time: Instant) -> GameResult<()> {
+        let now = self.latest_time;
+        let offset = ButtonScope::time_offset(now.saturating_duration_since(time));
+        
+        self.scope_canvas.draw_line_at_offset(ctx, offset)?;
         Ok(())
     }
 }
@@ -94,6 +79,10 @@ impl Scope for ButtonScope {
         buffer[0..2].copy_from_slice(&new_item);
         self.controller.from_buffer(&buffer);
         self.latest_time = time;
+
+        let point_time_offset = ButtonScope::time_offset(time.saturating_duration_since(self.scope_start_time));
+
+        self.scope_canvas.setup_drawing(ctx, point_time_offset)?;
 
         for (i, button) in self.button_order.iter().enumerate() {
             if self.controller.just_pressed(&BUTTONS[*button]) {
@@ -109,12 +98,8 @@ impl Scope for ButtonScope {
 
             }
         };
-
-        let point_time_offset = ButtonScope::time_offset(time.saturating_duration_since(self.scope_start_time));
-
-        self.scope_offset = point_time_offset;
-        if point_time_offset > self.canvas_width as f32 {
-            for (i, button) in self.button_order.iter().enumerate() {
+        if self.scope_canvas.update(ctx)? {
+            for (i, _button) in self.button_order.iter().enumerate() {
                 if let Some(button_time) = self.last_buttons[i] {
                     self.draw_to_canvas(ctx, button_time, time, i)?;
 
@@ -122,46 +107,34 @@ impl Scope for ButtonScope {
                 }
             }
 
-            self.scope_offset_old = point_time_offset;
             self.scope_start_time = time;
-            //let testrect = Mesh::new_rectangle(ctx, DrawMode::fill(), [0., 0., 5., 5.].into(), Color::MAGENTA)?;
-            std::mem::swap(&mut self.scope_canvas, &mut self.scope_canvas_old);
-            graphics::set_canvas(ctx, Some(&self.scope_canvas));
-            graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
-            //graphics::draw(ctx, &testrect, DrawParam::new())?;
         }
+
+        reset_graphics(ctx)?;
 
         Ok(())
     }
 
-    fn draw(&self, ctx: &mut Context, x: f32, y: f32) -> GameResult<()> {
+    fn draw(&self, ctx: &mut Context) -> GameResult<()> {
         let now = Instant::now();
-        graphics::draw(ctx, &self.scope_canvas, DrawParam::new().dest([x - 0. + self.scope_offset, y]).scale([-1., 1.]))?;
-        graphics::draw(ctx, &self.scope_canvas_old, DrawParam::new().dest([x - 0. + self.scope_offset + self.scope_offset_old, y]).scale([-1., 1.]))?;
-        for (i, button) in self.button_order.iter().enumerate() { 
+        self.scope_canvas.draw(ctx, self.scope_canvas.x, -self.scope_canvas.y)?;
+        for (i, _button) in self.button_order.iter().enumerate() { 
             if let Some(press_time) = self.last_buttons[i] {
                 let rect = self.get_rect(ctx, i, now.saturating_duration_since(press_time))?;
-                graphics::draw(ctx, &rect, DrawParam::new().dest([x, y]))?;
+                graphics::draw(ctx, &rect, DrawParam::new().dest([self.scope_canvas.x, self.scope_canvas.y]))?;
             }
         }
         Ok(())
     }
 
     fn reset(&mut self, ctx: &mut Context) {//TODO
-        
+        self.scope_canvas.reset(ctx);
     }
 
     fn get_time_from_pos(&mut self, x: f32, y: f32) -> Option<Instant> {
-        let (value, orthogonal_val) = match self.direction { ScopeDirection::Horizontal => (x, y), ScopeDirection::Vertical => (y, x), };
-        let (max, orthogonal_max) = match self.direction {
-            ScopeDirection::Horizontal => (self.canvas_width, self.canvas_height),
-            ScopeDirection::Vertical => (self.canvas_height, self.canvas_width),
-        };
-        if value >= 0. && value < max as f32 && orthogonal_val >= 0. && orthogonal_val < orthogonal_max as f32 {
-            let time = ButtonScope::time_offset_rev(value);
-            let now = self.latest_time;
-            return Some(now - time)
-        }
-        None
+        let value = self.scope_canvas.get_offset_from_pos(x - self.scope_canvas.x, y - self.scope_canvas.y)?;
+        let time = ButtonScope::time_offset_rev(value);
+        let now = self.latest_time;
+        Some(now - time)
     }
 }
