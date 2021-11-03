@@ -30,10 +30,18 @@ pub struct Controller {
     c_starty: i8,
 }
 
+#[derive(PartialEq, Clone, Copy)]
 pub struct Button {
     index: u8,
     mask: u8,
     name: &'static str,
+}
+
+impl Button {
+    /// Get a reference to the button's name.
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
 }
 
 pub const A_BUTTON: Button = Button { index: 0, mask: 0x1, name: "A" };
@@ -70,11 +78,31 @@ impl Controller {
         self.buffer.copy_from_slice(buffer);
     }
 
-    pub fn pressed_buttons(&self) -> Vec<String> {
+    pub fn buttons_just_pressed(&self) -> Vec<&Button> {
         let mut buttons = vec!{};
-        for button in BUTTONS {
-            if self.is_down(&button) {
-                buttons.push(button.name.to_string());
+        for button in BUTTONS.iter() {
+            if self.just_pressed(button) {
+                buttons.push(button);
+            }
+        }
+        buttons
+    }
+
+    pub fn buttons_just_released(&self) -> Vec<&Button> {
+        let mut buttons = vec!{};
+        for button in BUTTONS.iter() {
+            if self.just_released(button) {
+                buttons.push(button);
+            }
+        }
+        buttons
+    }
+
+    pub fn buttons_down(&self) -> Vec<&Button> {
+        let mut buttons = vec!{};
+        for button in BUTTONS.iter() {
+            if self.is_down(button) {
+                buttons.push(button);
             }
         }
         buttons
@@ -87,6 +115,11 @@ impl Controller {
     pub fn just_pressed(&self, button: &Button) -> bool {
         let pressed_last = self.buffer_last[button.index as usize] & button.mask != 0;
         self.is_down(button) && !pressed_last
+    }
+    
+    pub fn just_released(&self, button: &Button) -> bool {
+        let pressed_last = self.buffer_last[button.index as usize] & button.mask != 0;
+        !self.is_down(button) && pressed_last
     }
     
     pub fn stick_pos(&self) -> (i8, i8) {
@@ -126,7 +159,10 @@ impl Controller {
 
 impl ToString for Controller {
     fn to_string(&self) -> String {
-        self.pressed_buttons().join(", ")
+        self.buttons_down().iter()
+            .map(|button| button.name.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 

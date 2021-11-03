@@ -15,10 +15,10 @@ pub trait Scope {
 }
 
 pub struct ScopeCanvas {
-    canvas: Canvas,
-    canvas_old: Canvas,
-    offset: f32,
-    offset_old: f32,
+    pub canvas: Canvas,
+    pub canvas_old: Canvas,
+    pub offset: f32,
+    pub offset_old: f32,
     pub direction: ScopeDirection,
     pub x: f32,
     pub y: f32,
@@ -76,7 +76,6 @@ impl ScopeCanvas {
 
     pub fn update(&mut self, ctx: &mut Context) -> GameResult<bool> {
         let point_time_offset = self.offset;
-        //TODO magic number, where should it come from
         if point_time_offset > self.width as f32 {
             self.offset_old = self.offset;
             let testrect = Mesh::new_rectangle(ctx, DrawMode::fill(), [0., 0., 5., 5.].into(), Color::RED)?;

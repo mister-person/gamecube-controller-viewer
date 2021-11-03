@@ -35,7 +35,7 @@ impl ButtonScope {
             scope_start_time: Instant::now(),
             last_buttons: Default::default(),
             controller: Controller::new(),
-            button_order: vec![0, 1, 2, 3, 9, 10, 11, 6],
+            button_order: vec![0, 1, 2, 3, 9, 11, 10, 6],
             latest_time: Instant::now(),
         })
     }
@@ -89,7 +89,6 @@ impl Scope for ButtonScope {
                 self.last_buttons[i] = Some(time);
             }
             else if !self.controller.is_down(&BUTTONS[*button]) {
-
                 if let Some(button_time) = self.last_buttons[i] {
                     self.draw_to_canvas(ctx, button_time, time, i)?;
 
@@ -101,6 +100,7 @@ impl Scope for ButtonScope {
         if self.scope_canvas.update(ctx)? {
             for (i, _button) in self.button_order.iter().enumerate() {
                 if let Some(button_time) = self.last_buttons[i] {
+                    graphics::set_canvas(ctx, Some(&self.scope_canvas.canvas_old));
                     self.draw_to_canvas(ctx, button_time, time, i)?;
 
                     self.last_buttons[i] = Some(time);
