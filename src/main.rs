@@ -54,7 +54,7 @@ fn main() {
 
     let input_sequences = Box::new(input_sequence::make_some_sequences()).leak();
 	let mut my_game = GameState::new(&mut ctx, receiver).unwrap();
-    my_game.input_sequences_states = Some(InputSequenceState::new(&input_sequences[1]));
+    my_game.input_sequences_states = Some(InputSequenceState::new(&input_sequences[3]));
 
 	// Run!
 	event::run(ctx, event_loop, my_game);
@@ -184,10 +184,10 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
 
             let controller = self.get_controller();
             for button in controller.buttons_just_pressed() {
-                self.input_sequences_states.as_mut().unwrap().action(input_sequence::ControllerAction::Press(*button), poll.time);
+                self.input_sequences_states.as_mut().unwrap().action(input_sequence::ControllerAction::Press(*button), &controller, poll.time);
             }
             for button in controller.buttons_just_released() {
-                self.input_sequences_states.as_mut().unwrap().action(input_sequence::ControllerAction::Release(*button), poll.time);
+                self.input_sequences_states.as_mut().unwrap().action(input_sequence::ControllerAction::Release(*button), &controller, poll.time);
             }
 
             //add trail points to stick display
@@ -314,7 +314,7 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
                         start = Some(time)
                     }
                     let since_start = *time - *start.unwrap();
-                    draw_text(ctx, format!("{}, time: {:.3} frames", input.to_string(), duration_to_frame_count(since_start)), 400., 850. + (15*i) as f32, Color::CYAN)?;
+                    draw_text(ctx, format!("{}, time: {:.3} frames ({} ms)", input.to_string(), duration_to_frame_count(since_start), since_start.as_millis()), 400., 850. + (15*i) as f32, Color::CYAN)?;
                 }
                 draw_text(ctx, format!("chance of success: {}%", sequence_states.success_rate().unwrap() * 100.), 400., 850. + (15*sequence.len()) as f32, Color::CYAN)?;
             }

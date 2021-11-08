@@ -149,7 +149,7 @@ impl Oscilloscope {
             y: y as f32,
             scope_start_time: Instant::now(),
             last_point: None,
-            plane: Box::new(zones::Test2 {}),
+            plane: Box::new(zones::PlaneWithZones::default_plane()),
         })
     }
 

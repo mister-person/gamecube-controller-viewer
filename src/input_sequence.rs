@@ -1,12 +1,37 @@
 use std::{ops::{Range, RangeBounds, RangeFrom}, time::Instant};
 
-use crate::{controller::{B_BUTTON, Button, Y_BUTTON}, duration_to_frame_count};
+use crate::{controller::{A_BUTTON, B_BUTTON, Button, Controller, Y_BUTTON}, duration_to_frame_count, zones::Zone};
 
-#[derive(PartialEq)]
 pub enum ControllerAction {
     Nothing,
     Press(Button),
     Release(Button),
+    Enter(Box<dyn Zone>),
+    Leave(Box<dyn Zone>),
+}
+
+impl PartialEq for ControllerAction {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Press(l0), Self::Press(r0)) => l0 == r0,
+            (Self::Release(l0), Self::Release(r0)) => l0 == r0,
+            (Self::Enter(l0), Self::Enter(r0)) => l0.get_name() == r0.get_name(),
+            (Self::Leave(l0), Self::Leave(r0)) => l0.get_name() == r0.get_name(),
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
+}
+
+impl std::fmt::Debug for ControllerAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Nothing => write!(f, "Nothing"),
+            Self::Press(arg0) => f.debug_tuple("Press").field(arg0).finish(),
+            Self::Release(arg0) => f.debug_tuple("Release").field(arg0).finish(),
+            Self::Enter(arg0) => f.debug_tuple("Enter").field(&arg0.get_name()).finish(),
+            Self::Leave(arg0) => f.debug_tuple("Leave").field(&arg0.get_name()).finish(),
+        }
+    }
 }
 
 impl ToString for ControllerAction {
@@ -15,6 +40,8 @@ impl ToString for ControllerAction {
             ControllerAction::Nothing => "nothing".to_owned(),
             ControllerAction::Press(button) => format!("Pressed {}", button.name()),
             ControllerAction::Release(button) => format!("Released {}", button.name()),
+            ControllerAction::Enter(zone) => format!("Entered {}", zone.get_name()),
+            ControllerAction::Leave(zone) => format!("Left {}", zone.get_name()),
         }
     }
 }
@@ -67,12 +94,18 @@ pub struct InputSequenceState<'a> {
     pub completed: Option<Vec<(ControllerAction, Instant)>>,
 }
 
+pub enum MissInfo<'a> {
+    Success,
+    Early(&'a ControllerAction),
+    Late(&'a ControllerAction),
+}
+
 impl<'a> InputSequenceState<'a> {
     pub fn new(sequence: &'a InputSequence) -> Self {
         Self { sequence, state: 0, history: Vec::new(), completed: None }
     }
 
-    pub fn action(&mut self, action: ControllerAction, now: Instant) -> bool {
+    pub fn action(&mut self, action: ControllerAction, controller: &Controller, now: Instant) -> bool {
         if let Some((expected_action, frame_number)) = self.sequence.actions.get(self.state) {
             if action == *expected_action {
                 self.state += 1;
@@ -92,6 +125,22 @@ impl<'a> InputSequenceState<'a> {
         self.completed.as_ref()
     }
 
+    pub fn is_successful(&self, actions: &[(&'a ControllerAction, i32)]) -> MissInfo<'a> {
+        let mut last_frame_number = 0;
+        for (i, (action, frame_number)) in actions.iter().enumerate() {
+            let frame_diff = self.sequence.actions[i].1;
+            let expected_frame = (frame_diff.0 + last_frame_number, frame_diff.1 + last_frame_number);
+            if *frame_number < expected_frame.0 {
+                return MissInfo::Early(*action)
+            }
+            else if *frame_number > expected_frame.1 {
+                return MissInfo::Early(*action)
+            }
+            last_frame_number = *frame_number;
+        }
+        MissInfo::Success
+    }
+
     pub fn success_rate(&self) -> Option<f64> {
         let mut answer = 1.;
         let inputs = self.completed.as_ref()?;
@@ -105,15 +154,15 @@ impl<'a> InputSequenceState<'a> {
         }
         let delta_with_next = deltas.iter().zip(deltas.iter().cycle().skip(1));
         for (delta, next) in delta_with_next {
+            let mut frame_numbers = vec![];
             for (i, (action, time)) in inputs.iter().enumerate() {
                 let frame_time = duration_to_frame_count(time.checked_duration_since(start_time)?);
 
                 let frame_number = (frame_time + delta).floor() as i32;
-                let expected_frame = self.sequence.actions[i].1;
-                if !(frame_number >= expected_frame.0 && frame_number <= expected_frame.1) {
-                    answer -= if (next - delta) >= 0. {next - delta} else {next - delta + 1.};
-                    break;
-                }
+                frame_numbers.push((action, frame_number));
+            }
+            if let MissInfo::Early(_) | MissInfo::Late(_) = self.is_successful(&frame_numbers) {
+                answer -= if (next - delta) >= 0. {next - delta} else {next - delta + 1.};
             }
         }
         Some(answer)
@@ -131,9 +180,21 @@ pub fn make_some_sequences() -> Vec<InputSequence> {
     short_hop_3f.add(ControllerAction::Press(Y_BUTTON), 0);
     short_hop_3f.add(ControllerAction::Release(Y_BUTTON), 1..2);
     ret.push(short_hop_3f);
+
     let mut jc_shine = InputSequence::new("jc shine");
     jc_shine.add(ControllerAction::Press(Y_BUTTON), 0);
     jc_shine.add(ControllerAction::Press(B_BUTTON), 3);
     ret.push(jc_shine);
+
+    let mut pivot_grab = InputSequence::new("pivot grab");
+    pivot_grab.add(ControllerAction::Press(Y_BUTTON), 0);
+    pivot_grab.add(ControllerAction::Press(B_BUTTON), 3);
+    ret.push(pivot_grab);
+
+    let mut a_b_same_frame = InputSequence::new("press A and B on the same frame");
+    a_b_same_frame.add(ControllerAction::Press(A_BUTTON), 0);
+    a_b_same_frame.add(ControllerAction::Press(B_BUTTON), 0);
+    ret.push(a_b_same_frame);
+
     ret
 }

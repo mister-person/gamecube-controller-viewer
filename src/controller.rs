@@ -30,7 +30,7 @@ pub struct Controller {
     c_starty: i8,
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub struct Button {
     index: u8,
     mask: u8,

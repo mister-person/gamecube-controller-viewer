@@ -23,7 +23,7 @@ impl StickDisplay {
     pub fn new(ctx: &mut Context,  width: u16, height: u16) -> GameResult<Self> {
         let background_canvas = Canvas::new(ctx, width, height, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
         let trail_canvas = Canvas::new(ctx, width, height, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
-        let plane = Box::new(zones::Test2 {});
+        let plane = Box::new(zones::PlaneWithZones::default_plane());
         Ok(Self {
             plane,
             background_canvas,
