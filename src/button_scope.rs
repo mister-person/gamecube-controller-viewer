@@ -117,7 +117,7 @@ impl Scope for ButtonScope {
 
     fn draw(&self, ctx: &mut Context) -> GameResult<()> {
         let now = Instant::now();
-        self.scope_canvas.draw(ctx, self.scope_canvas.x, -self.scope_canvas.y)?;
+        self.scope_canvas.draw(ctx, self.scope_canvas.x, self.scope_canvas.y)?;
         for (i, _button) in self.button_order.iter().enumerate() { 
             if let Some(press_time) = self.last_buttons[i] {
                 let rect = self.get_rect(ctx, i, now.saturating_duration_since(press_time))?;

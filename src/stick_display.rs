@@ -13,6 +13,8 @@ pub struct StickDisplay {
     background_progress_x: i8,
     background_updated: bool,
 
+    x: f32,
+    y: f32,
     width: f32,
     height: f32,
 
@@ -20,7 +22,7 @@ pub struct StickDisplay {
 }
 
 impl StickDisplay {
-    pub fn new(ctx: &mut Context,  width: u16, height: u16) -> GameResult<Self> {
+    pub fn new(ctx: &mut Context, x: f32, y: f32, width: u16, height: u16) -> GameResult<Self> {
         let background_canvas = Canvas::new(ctx, width, height, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
         let trail_canvas = Canvas::new(ctx, width, height, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
         let plane = Box::new(zones::PlaneWithZones::default_plane());
@@ -33,6 +35,8 @@ impl StickDisplay {
             background_updated: false,
             width: width as f32,
             height: height as f32,
+            x,
+            y,
         })
     }
 
@@ -98,11 +102,11 @@ impl StickDisplay {
         Ok(())
     }
 
-    pub fn draw(&mut self, ctx: &mut Context, x: f32, y: f32) -> GameResult<()> {
+    pub fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
         if !self.background_updated {
             self.update_background(ctx)?;
         }
-        let offset_param = DrawParam::new().dest([x, y]);
+        let offset_param = DrawParam::new().dest([self.x, self.y]);
         graphics::draw(ctx, &self.background_canvas, offset_param)?;
         graphics::draw(ctx, &self.trail_canvas, offset_param)?;
         Ok(())

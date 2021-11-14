@@ -61,8 +61,8 @@ impl ScopeCanvas {
         let offset2;
         if self.direction == ScopeDirection::Horizontal {
             scale = [-1., 1.];
-            offset = [x + self.offset, y];
-            offset2 = [x + self.offset + self.offset_old, y];
+            offset = [x + self.offset, -y];
+            offset2 = [x + self.offset + self.offset_old, -y];
         }
         else {
             scale = [1., -1.];
@@ -82,6 +82,8 @@ impl ScopeCanvas {
             std::mem::swap(&mut self.canvas, &mut self.canvas_old);
             graphics::set_canvas(ctx, Some(&self.canvas));
             graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
+            //uncomment to see where the canvases are
+            //graphics::clear(ctx, Color::from_rgba(0, 100, 0, 100));
             graphics::draw(ctx, &testrect, DrawParam::new())?;
             return Ok(true)
         }
@@ -124,7 +126,7 @@ impl ScopeCanvas {
 
 #[derive(Clone, Copy)]
 pub struct ScopePoint {
-    point: (i8, i8),
+    point: (i8, (i8, i8)),
     time: Instant,
 }
 #[derive(PartialEq)]
@@ -135,7 +137,7 @@ pub enum ScopeDirection {
 pub struct Oscilloscope {
     pub scope_start_time: Instant,
     last_point: Option<ScopePoint>,
-    plane: Box<dyn zones::Plane>,
+    pub plane: Box<dyn zones::Plane>,
     scope_canvas: ScopeCanvas,
     x: f32,
     y: f32,
@@ -154,11 +156,11 @@ impl Oscilloscope {
     }
 
     fn time_offset(time: Duration) -> f32 {
-        time.as_micros() as f32 / 1000.
+        time.as_micros() as f32 / 200.
     }
 
     fn time_offset_rev(pos: f32) -> Duration {
-        Duration::from_micros((pos * 1000.).floor() as u64)
+        Duration::from_micros((pos * 200.).floor() as u64)
     }
 
     pub fn draw_line_at_time(&self, ctx: &mut Context, time: Instant) -> GameResult<()> {
@@ -170,16 +172,25 @@ impl Oscilloscope {
         self.scope_canvas.draw_line_at_offset(ctx, offset)?;
         Ok(())
     }
+
+    fn to_screen_coords(&self, coords: i8) -> f32 {
+        let width = match self.scope_canvas.direction {
+            ScopeDirection::Vertical => self.scope_canvas.width,
+            ScopeDirection::Horizontal => self.scope_canvas.height,
+        };
+        let middle = width / 2.;
+        let scale = width / 2. / 90.;
+        middle + (coords as f32)*scale
+    }
 }
     
 impl Scope for Oscilloscope {
-    type Data = (i8, i8);
+    type Data = (i8, (i8, i8));
 
-    fn update(&mut self, ctx: &mut Context, new_point: (i8, i8), time: Instant) -> GameResult<()> {
+    fn update(&mut self, ctx: &mut Context, new_point: (i8, (i8, i8)), time: Instant) -> GameResult<()> {
         //maybe move to trait?
 
-        //TODO this assumes canvas height
-        let point_screen = to_screen_coords(&new_point);
+        let point_screen = self.to_screen_coords(new_point.0);
         let point_time_offset = Oscilloscope::time_offset(time.saturating_duration_since(self.scope_start_time));
 
         //TODO let people change speed of oscilloscope
@@ -189,19 +200,19 @@ impl Scope for Oscilloscope {
         //break up this function it's waay too big
         let last_point = &self.last_point;
         if let Some(ScopePoint { point: last_point, time: last_time }) = last_point {
-            let last_point_screen = to_screen_coords(&last_point);
+            let last_point_screen = self.to_screen_coords(last_point.0);
             let last_point_time_offset = Oscilloscope::time_offset(last_time.saturating_duration_since(self.scope_start_time));
 
-            let color = self.plane.get_zone(*last_point).fg_color.into();
+            let color = self.plane.get_zone(last_point.1).fg_color.into();
 
             self.scope_canvas.setup_drawing(ctx, point_time_offset)?;
 
             let line_coords;
             if self.scope_canvas.direction == ScopeDirection::Horizontal {
-                line_coords = [[last_point_time_offset, last_point_screen[1]], [point_time_offset, point_screen[1]]];
+                line_coords = [[last_point_time_offset, self.scope_canvas.height - last_point_screen], [point_time_offset, self.scope_canvas.height - point_screen]];
             }
             else {
-                line_coords = [[last_point_screen[0], last_point_time_offset], [point_screen[0], point_time_offset]];
+                line_coords = [[last_point_screen, last_point_time_offset], [point_screen, point_time_offset]];
             }
             let line = graphics::Mesh::new_line(ctx, &line_coords, 1., color);
             if let Ok(line) = line {
@@ -222,7 +233,6 @@ impl Scope for Oscilloscope {
     }
     
     fn draw(&self, ctx: &mut Context) -> GameResult<()> {
-        //TODO ability to translate, pass in coords maybe?
         self.scope_canvas.draw(ctx, self.x, self.y)?;
         Ok(())
     }
@@ -242,12 +252,5 @@ impl Scope for Oscilloscope {
         let time = Oscilloscope::time_offset_rev(value);
         Some(now - time)
     }
-}
 
-fn to_screen_coords(coords: &(i8, i8)) -> [f32; 2] {
-    let middlex = 220.;
-    let middley = 220.;
-    let x = middlex + (coords.0 as f32)*2.;
-    let y = middley - (coords.1 as f32)*2.;
-    [x, y]
 }

@@ -120,6 +120,7 @@ fn try_snoop_usb(device: Device<GlobalContext>, sender: &Sender<ControllerPoll>)
             }
             //I think this filters everything?
             if packet_info.devnum == device.address() && packet_info.busnum == device.bus_number() as u16 && packet_info.type_ == 'C' as i8 {
+                //println!("got data {:?}", data);
                 if data[4] == 0 || data[5] == 0 || data[6] == 0 || data[7] == 0 {
                     println!("wrong data? {:?}", data);
                     println!("cfg {:?}", packet_info);

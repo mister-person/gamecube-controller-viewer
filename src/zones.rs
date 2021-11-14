@@ -12,11 +12,31 @@ pub struct ZoneColor {
     pub fg_color: (u8, u8, u8),
 }
 
-pub trait Zone {
+pub trait ZoneTrait {
     fn in_zone(&self, pos: (i8, i8)) -> bool;
     fn get_name(&self) -> &'static str;
 }
 
+#[derive(Debug, PartialEq, Hash, Eq, Clone)]
+pub enum Zone {
+    SquareZone(SquareZone),
+}
+
+impl ZoneTrait for Zone {
+    fn in_zone(&self, pos: (i8, i8)) -> bool {
+        match self {
+            Zone::SquareZone(zone) => zone.in_zone(pos),
+        }
+    }
+
+    fn get_name(&self) -> &'static str {
+        match self {
+            Zone::SquareZone(zone) => zone.get_name(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Hash, Eq, Clone)]
 pub struct SquareZone {
     min_x: i8,
     max_x: i8,
@@ -25,7 +45,7 @@ pub struct SquareZone {
     name: &'static str,
 }
 
-impl Zone for SquareZone {
+impl ZoneTrait for SquareZone {
     fn in_zone(&self, pos: (i8, i8)) -> bool {
         return pos.0 >= self.min_x && pos.0 <= self.max_x && pos.1 >= self.min_y && pos.1 <= self.max_y
     }
@@ -35,24 +55,34 @@ impl Zone for SquareZone {
     }
 }
 
-const DEADZONE: SquareZone = SquareZone {
+pub const DEADZONE: SquareZone = SquareZone {
     min_x: -23, max_x: 23, min_y: -23, max_y: 23, name: "deadzone"
 };
-const EVERYTHING: SquareZone = SquareZone {
+pub const EVERYTHING: SquareZone = SquareZone {
     min_x: -128, max_x: 127, min_y: -128, max_y: 127, name: "everything"
 };
-const LEFT_SMASH: SquareZone = SquareZone {
+pub const RIGHT_SMASH: SquareZone = SquareZone {
     min_x: 64, max_x: 127, min_y: -128, max_y: 127, name: "f smash left"
 };
-const RIGHT_SMASH: SquareZone = SquareZone {
+pub const LEFT_SMASH: SquareZone = SquareZone {
     min_x: -128, max_x: -64, min_y: -128, max_y: 127, name: "f smash right"
 };
-const UP_SMASH: SquareZone = SquareZone {
+pub const UP_SMASH: SquareZone = SquareZone {
     min_x: -128, max_x: 127, min_y: 53, max_y: 127, name: "up smash"
 };
-const DOWN_SMASH: SquareZone = SquareZone {
+pub const DOWN_SMASH: SquareZone = SquareZone {
     min_x: -128, max_x: 127, min_y: -128, max_y: -53, name: "down smash"
 };
+
+pub fn get_some_zones<'a>() -> Vec<&'a Zone> {
+    vec![
+        &Zone::SquareZone(DEADZONE),
+        &Zone::SquareZone(LEFT_SMASH),
+        &Zone::SquareZone(RIGHT_SMASH),
+        &Zone::SquareZone(UP_SMASH),
+        &Zone::SquareZone(DOWN_SMASH),
+    ]
+}
 
 pub trait Plane {
     fn get_zone(&self, point: (i8, i8)) -> ZoneColor;
@@ -60,7 +90,7 @@ pub trait Plane {
 }
 
 pub struct PlaneWithZones<'a> {
-    zones: Vec<(&'a dyn Zone, ZoneColor)>,
+    zones: Vec<(&'a dyn ZoneTrait, ZoneColor)>,
 }
 
 impl<'a> PlaneWithZones<'a> {
@@ -68,12 +98,13 @@ impl<'a> PlaneWithZones<'a> {
         Self { zones: Vec::new() }
     }
 
-    pub fn add_zone(&mut self, zone: &'a dyn Zone, color: ZoneColor) {
+    pub fn add_zone(&mut self, zone: &'a dyn ZoneTrait, color: ZoneColor) {
         self.zones.push((zone, color));
     }
 
     pub fn default_plane() -> Self {
         let mut plane = PlaneWithZones::new();
+        plane.add_zone(&DEADZONE, ZoneColor { name: "deadzone".to_string(), bg_color: (0x40, 0x40, 0x40), fg_color: (0xc0, 0xc0, 0xc0) });
         plane.add_zone(&LEFT_SMASH, ZoneColor { name: "f smash".to_string(), bg_color: (0x40, 0x00, 0x40), fg_color: (0x80, 0x00, 0xff) });
         plane.add_zone(&RIGHT_SMASH, ZoneColor { name: "f smash".to_string(), bg_color: (0x40, 0x00, 0x40), fg_color: (0x80, 0x00, 0xff) });
         plane.add_zone(&UP_SMASH, ZoneColor { name: "up smash".to_string(), bg_color: (0x40, 0x00, 0x40), fg_color: (0x80, 0x00, 0xff) });
@@ -161,7 +192,7 @@ impl Plane for CStick {
             return ZoneColor { name: "out of bounds".to_string(), bg_color: (0x00, 0x00, 0x00), fg_color: (0x50, 0x00, 0x00) };
         }
         if point.0.abs() < 23 && point.1.abs() < 23 {
-            return ZoneColor { name: "deadzone".to_string(), bg_color: (0x40, 0x40, 0x00), fg_color: (0xc0, 0xc0, 0x00) };
+            return ZoneColor { name: "deadzone".to_string(), bg_color: (0x30, 0x30, 0x00), fg_color: (0x70, 0x70, 0x00) };
         }
         else if true {
             return ZoneColor { name: "yellow".to_string(), bg_color: (0x80, 0x80, 0x00), fg_color: (0xff, 0xff, 0x00) };

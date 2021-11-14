@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use std::thread;
 use std::sync::mpsc::{channel, Receiver};
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use ggez::input::mouse;
 use ggez::{Context, ContextBuilder, GameResult};
@@ -29,11 +29,13 @@ use gc_adapter::start_adapter_polling;
 
 mod stick_display;
 use stick_display::StickDisplay;
+use zones::Zone;
 
 mod button_display;
 
-use crate::input_sequence::InputSequence;
+use crate::input_sequence::{ActionSuccess, ControllerAction, InputSequence};
 use crate::oscilloscope::Scope;
+use crate::zones::ZoneTrait;
 
 mod button_scope;
 use button_scope::ButtonScope;
@@ -54,7 +56,7 @@ fn main() {
 
     let input_sequences = Box::new(input_sequence::make_some_sequences()).leak();
 	let mut my_game = GameState::new(&mut ctx, receiver).unwrap();
-    my_game.input_sequences_states = Some(InputSequenceState::new(&input_sequences[3]));
+    my_game.input_sequences_states = input_sequences.iter().map(|seq| InputSequenceState::new(seq)).collect();
 
 	// Run!
 	event::run(ctx, event_loop, my_game);
@@ -82,12 +84,16 @@ struct GameState<'a> {
 
     scope_y: Oscilloscope,
     scope_x: Oscilloscope,
+    c_scope_y: Oscilloscope,
+    c_scope_x: Oscilloscope,
 
     button_scope: ButtonScope,
 
     stick_pos_format: StickPosFormat,
 
-    input_sequences_states: Option<input_sequence::InputSequenceState<'a>>,
+    input_sequences_states: Vec<input_sequence::InputSequenceState<'a>>,
+    completed_sequences: Vec<(Vec<(ControllerAction, Duration, ActionSuccess)>, f64)>,
+    used_zones: Vec<(&'a Zone, bool)>,
 }
 
 impl<'a> GameState<'a> {
@@ -105,11 +111,17 @@ impl<'a> GameState<'a> {
     }
 
     pub fn new<'b>(ctx: &'b mut Context, receiver: Receiver<ControllerPoll>) -> GameResult<GameState<'a>> {
-        let oscilloscope_y = Oscilloscope::new(ctx, 440., 0., 1500., 400., ScopeDirection::Horizontal)?;
-        let oscilloscope_x = Oscilloscope::new(ctx, 0., 440., 400., 1500., ScopeDirection::Vertical)?;
+        let scope_y = Oscilloscope::new(ctx, 440., 0., 1500., 200., ScopeDirection::Horizontal)?;
+        let scope_x = Oscilloscope::new(ctx, 440., 200., 1500., 200., ScopeDirection::Horizontal)?;
+        let mut c_scope_y = Oscilloscope::new(ctx, 440., 400., 1500., 130., ScopeDirection::Horizontal)?;
+        let mut c_scope_x = Oscilloscope::new(ctx, 440., 530., 1500., 130., ScopeDirection::Horizontal)?;
+        c_scope_y.plane = Box::new(zones::CStick{});
+        c_scope_x.plane = Box::new(zones::CStick{});
         let button_scope = ButtonScope::new(ctx, 440., 660., 1000., 180., ScopeDirection::Horizontal)?;
-        let mut c_stick_display = StickDisplay::new(ctx, 220, 220)?;
+        let stick_display = StickDisplay::new(ctx, 0., 0., 440, 440)?;
+        let mut c_stick_display = StickDisplay::new(ctx, 0., 400., 220, 220)?;
         c_stick_display.set_plane(Box::new(zones::CStick {}));
+        let used_zones = zones::get_some_zones().iter().map(|z| (*z, false)).collect();
         Ok(GameState {
             receiver,
             controllers: [Controller::new(); 4],
@@ -117,14 +129,18 @@ impl<'a> GameState<'a> {
             prev_coords: VecDeque::new(),
             c_prev_coords: VecDeque::new(),
             paused: false,
-            scope_y: oscilloscope_y,
-            scope_x: oscilloscope_x,
-            stick_display: StickDisplay::new(ctx, 440, 440)?,
+            scope_y,
+            scope_x,
+            c_scope_y,
+            c_scope_x,
+            stick_display,
             c_stick_display,
             stick_pos_format: StickPosFormat::Integer,
             button_scope,
             prev_input_map: BTreeMap::new(),
-            input_sequences_states: None,
+            input_sequences_states: vec![],
+            used_zones,
+            completed_sequences: vec![],
         })
     }
 }
@@ -170,6 +186,8 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
                     self.paused = false;
                     self.scope_y.reset(ctx);
                     self.scope_x.reset(ctx);
+                    self.c_scope_y.reset(ctx);
+                    self.c_scope_x.reset(ctx);
                 }
                 continue
             }
@@ -182,17 +200,41 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
                 self.button_scope.update(ctx, buttons, poll.time)?;
             }
 
-            let controller = self.get_controller();
-            for button in controller.buttons_just_pressed() {
-                self.input_sequences_states.as_mut().unwrap().action(input_sequence::ControllerAction::Press(*button), &controller, poll.time);
-            }
-            for button in controller.buttons_just_released() {
-                self.input_sequences_states.as_mut().unwrap().action(input_sequence::ControllerAction::Release(*button), &controller, poll.time);
-            }
-
-            //add trail points to stick display
             let stick_pos = self.get_controller().stick_pos();
             let clamp_pos = controller::clamp(stick_pos.0, stick_pos.1);
+
+            let controller = self.get_controller();
+
+            let mut actions = vec![];
+            actions.extend(
+                controller.buttons_just_pressed().iter().map(|button| ControllerAction::Press(**button))
+            );
+            actions.extend(
+                controller.buttons_just_released().iter().map(|button| ControllerAction::Release(**button))
+            );
+            for (i, (zone, in_last)) in self.used_zones.clone().iter().enumerate() {
+                let in_zone = zone.in_zone(clamp_pos);
+                if in_zone && !in_last {
+                    actions.push(ControllerAction::Enter((**zone).clone()));
+                }
+                if !in_zone && *in_last {
+                    actions.push(ControllerAction::Leave((**zone).clone()));
+                }
+                self.used_zones[i].1 = in_zone;
+            }
+            for seq in self.input_sequences_states.iter_mut() {
+                for action in &actions {
+                    let finished = seq.action(action.clone(), &controller, poll.time);
+                    if finished {
+                        if let Some(actions) = seq.sequence_info() {
+                            let rate = seq.success_rate().unwrap_or(0.);
+                            self.completed_sequences.push((actions, rate));
+                        }
+                    }
+                }
+            };
+
+            //add trail points to stick display
             self.prev_coords.push_front((stick_pos, poll.time));
             self.stick_display.add_point(ctx, clamp_pos)?;
             if clamp_pos != stick_pos {
@@ -228,8 +270,10 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
                 }
             }
 
-            self.scope_y.update(ctx, clamp_pos, poll.time)?;
-            self.scope_x.update(ctx, clamp_pos, poll.time)?;
+            self.scope_x.update(ctx, (clamp_pos.0, clamp_pos), poll.time)?;
+            self.scope_y.update(ctx, (clamp_pos.1, clamp_pos), poll.time)?;
+            self.c_scope_x.update(ctx, (c_clamp_pos.0, c_clamp_pos), poll.time)?;
+            self.c_scope_y.update(ctx, (c_clamp_pos.1, c_clamp_pos), poll.time)?;
 
         }
         Ok(())
@@ -238,14 +282,14 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
     fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
         graphics::clear(ctx, Color::BLACK);
 
-        self.stick_display.draw(ctx, 0., 0.)?;
+        self.stick_display.draw(ctx)?;
 
         if self.get_controller().stick_clamp() != self.get_controller().stick_pos() {
             self.stick_display.draw_point(ctx, self.get_controller().stick_pos(), Color::RED)?;
         }
         self.stick_display.draw_point(ctx, self.get_controller().stick_clamp(), Color::WHITE)?;
 
-        self.c_stick_display.draw(ctx, 400., 400.)?;
+        self.c_stick_display.draw(ctx)?;
 
         self.button_scope.draw(ctx)?;
 
@@ -253,17 +297,23 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
 
         self.scope_y.draw(ctx)?;
         self.scope_x.draw(ctx)?;
+        self.c_scope_y.draw(ctx)?;
+        self.c_scope_x.draw(ctx)?;
 
         let mouse_pos = mouse::position(ctx);
         let mut instant = None;
         instant = instant.or_else(|| self.scope_y.get_time_from_pos(mouse_pos.x, mouse_pos.y));
         instant = instant.or_else(|| self.scope_x.get_time_from_pos(mouse_pos.x, mouse_pos.y));
+        instant = instant.or_else(|| self.c_scope_y.get_time_from_pos(mouse_pos.x, mouse_pos.y));
+        instant = instant.or_else(|| self.c_scope_x.get_time_from_pos(mouse_pos.x, mouse_pos.y));
         instant = instant.or_else(|| self.button_scope.get_time_from_pos(mouse_pos.x, mouse_pos.y));
         if let Some(instant) = instant {
             let text = self.scope_y.scope_start_time.saturating_duration_since(instant).as_millis().to_string();
             draw_text(ctx, text, 200., 0., Color::WHITE)?;
             self.scope_y.draw_line_at_time(ctx, instant)?;
             self.scope_x.draw_line_at_time(ctx, instant)?;
+            self.c_scope_y.draw_line_at_time(ctx, instant)?;
+            self.c_scope_x.draw_line_at_time(ctx, instant)?;
             self.button_scope.draw_line_at_time(ctx, instant)?;
 
             let mut controller = self.get_controller().clone();
@@ -306,21 +356,18 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
 
         draw_text(ctx, format!("(fpx: {})", ggez::timer::fps(ctx)), 250., 0., Color::WHITE)?;
 
-        if let Some(sequence_states) = &self.input_sequences_states {
-            if let Some(sequence) = sequence_states.completed_sequence() {
-                let mut start = None;
-                for (i, (input, time)) in sequence.iter().enumerate() {
-                    if start == None {
-                        start = Some(time)
-                    }
-                    let since_start = *time - *start.unwrap();
-                    draw_text(ctx, format!("{}, time: {:.3} frames ({} ms)", input.to_string(), duration_to_frame_count(since_start), since_start.as_millis()), 400., 850. + (15*i) as f32, Color::CYAN)?;
-                }
-                draw_text(ctx, format!("chance of success: {}%", sequence_states.success_rate().unwrap() * 100.), 400., 850. + (15*sequence.len()) as f32, Color::CYAN)?;
+        if let Some((actions, success_rate)) = self.completed_sequences.get(self.completed_sequences.len() - 1) {
+            for (i, (input, since_last, success)) in actions.iter().enumerate() {
+                let color = match success {
+                    ActionSuccess::EarlyMiss => Color::from_rgb(255, 0, 128),
+                    ActionSuccess::Early => Color::MAGENTA,
+                    ActionSuccess::Success => Color::CYAN,
+                    ActionSuccess::Late => Color::from_rgb(255, 127, 0),
+                    ActionSuccess::LateMiss => Color::RED,
+                };
+                draw_text(ctx, format!("{}, time: {:.3} frames ({} ms) {}", input.to_string(), duration_to_frame_count(*since_last), since_last.as_millis(), success), 400., 850. + (15*i) as f32, color)?;
             }
-            else {
-                draw_text(ctx, format!(": {}", sequence_states.state), 400., 850., Color::CYAN)?;
-            }
+            draw_text(ctx, format!("chance of success: {}%", success_rate * 100.), 400., 850. + (15*actions.len()) as f32, Color::CYAN)?;
         }
 
         graphics::present(ctx)
