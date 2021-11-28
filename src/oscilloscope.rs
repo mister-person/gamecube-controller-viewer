@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use ggez::{Context, GameResult, graphics::{self, Canvas, Color, DrawMode, DrawParam, Mesh, Rect, get_window_color_format}};
 
-use crate::zones;
+use crate::{reset_graphics, zones};
 
 pub trait Scope {
     type Data;
@@ -17,6 +17,7 @@ pub trait Scope {
 pub struct ScopeCanvas {
     pub canvas: Canvas,
     pub canvas_old: Canvas,
+    canvas_scratch: Canvas,
     pub offset: f32,
     pub offset_old: f32,
     pub direction: ScopeDirection,
@@ -30,6 +31,7 @@ impl ScopeCanvas {
     pub fn new(ctx: &mut Context, x: f32, y: f32, width: f32, height: f32, direction: ScopeDirection) -> GameResult<ScopeCanvas> {
         let scope_canvas = Canvas::new(ctx, width as u16, height as u16, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
         let scope_canvas_old = Canvas::new(ctx, width as u16, height as u16, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
+        let canvas_scratch = Canvas::new(ctx, width as u16, height as u16, ggez::conf::NumSamples::One, get_window_color_format(ctx))?;
         graphics::set_canvas(ctx, Some(&scope_canvas));
         graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
         graphics::set_canvas(ctx, Some(&scope_canvas_old));
@@ -42,6 +44,7 @@ impl ScopeCanvas {
             y,
             canvas: scope_canvas,
             canvas_old: scope_canvas_old,
+            canvas_scratch,
             offset: 0.,
             offset_old: 0.,
             direction,
@@ -59,31 +62,47 @@ impl ScopeCanvas {
         let scale;
         let offset;
         let offset2;
+        let rect;
         if self.direction == ScopeDirection::Horizontal {
-            scale = [-1., 1.];
-            offset = [x + self.offset, -y];
-            offset2 = [x + self.offset + self.offset_old, -y];
+            scale = [1., 1.];
+            //offset = [-self.width + -x + self.offset, -y];
+            offset = [-x - self.offset, -y];
+            offset2 = [-self.width + self.offset, 0.];
+            //offset2 = [-x, -y];
+            //offset2 = [x + self.offset, -y];
+            //rect = [0.5, 0., 1., 1.].into();
+            rect = [1. - self.offset / self.width, 0., 1., 1.].into();
+            //rect = [0., 0., 1. - self.offset / self.width, 1.].into();
         }
-        else {
+        else {//TODO
             scale = [1., -1.];
             offset = [x, y + self.offset];
             offset2 = [x, y + self.offset + self.offset_old];
+            rect = [0., 0., 1., 0.5].into();
         }
-        graphics::draw(ctx, &self.canvas, DrawParam::new().scale(scale).offset(offset))?;
-        graphics::draw(ctx, &self.canvas_old, DrawParam::new().scale(scale).offset(offset2))?;
+
+        //hack because drawparam src is buggy
+        graphics::set_screen_coordinates(ctx, Rect::new(0., 0., self.width as f32, self.height as f32))?;
+        graphics::set_canvas(ctx, Some(&self.canvas_scratch));
+        graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
+        graphics::draw(ctx, &self.canvas_old, DrawParam::new().src(rect).offset(offset2).scale(scale))?;
+        reset_graphics(ctx)?;
+
+        graphics::draw(ctx, &self.canvas_scratch, DrawParam::new().offset([-x + self.width - self.offset, -y]).scale(scale))?;
+        graphics::draw(ctx, &self.canvas, DrawParam::new().offset(offset).scale(scale))?;
         Ok(())
     }
 
     pub fn update(&mut self, ctx: &mut Context) -> GameResult<bool> {
         let point_time_offset = self.offset;
-        if point_time_offset > self.width as f32 {
+        if point_time_offset <= 0. {
             self.offset_old = self.offset;
-            let testrect = Mesh::new_rectangle(ctx, DrawMode::fill(), [0., 0., 5., 5.].into(), Color::RED)?;
+            let testrect = Mesh::new_rectangle(ctx, DrawMode::fill(), [0., 0., 5., 5.].into(), Color::GREEN)?;
             std::mem::swap(&mut self.canvas, &mut self.canvas_old);
             graphics::set_canvas(ctx, Some(&self.canvas));
             graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
             //uncomment to see where the canvases are
-            //graphics::clear(ctx, Color::from_rgba(0, 100, 0, 100));
+            graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
             graphics::draw(ctx, &testrect, DrawParam::new())?;
             return Ok(true)
         }
@@ -155,12 +174,12 @@ impl Oscilloscope {
         })
     }
 
-    fn time_offset(time: Duration) -> f32 {
-        time.as_micros() as f32 / 200.
+    fn time_offset(&self, time: Duration) -> f32 {
+        self.scope_canvas.width - time.as_micros() as f32 / 5000.
     }
 
-    fn time_offset_rev(pos: f32) -> Duration {
-        Duration::from_micros((pos * 200.).floor() as u64)
+    fn time_offset_rev(&self, pos: f32) -> Duration {
+        Duration::from_micros(((self.scope_canvas.width - pos) * 5000.).floor() as u64)
     }
 
     pub fn draw_line_at_time(&self, ctx: &mut Context, time: Instant) -> GameResult<()> {
@@ -168,7 +187,7 @@ impl Oscilloscope {
             Some(point) => point.time,
             None => self.scope_start_time,
         };
-        let offset = Oscilloscope::time_offset(now.saturating_duration_since(time));
+        let offset = self.time_offset(now.saturating_duration_since(time));
         self.scope_canvas.draw_line_at_offset(ctx, offset)?;
         Ok(())
     }
@@ -191,7 +210,7 @@ impl Scope for Oscilloscope {
         //maybe move to trait?
 
         let point_screen = self.to_screen_coords(new_point.0);
-        let point_time_offset = Oscilloscope::time_offset(time.saturating_duration_since(self.scope_start_time));
+        let point_time_offset = self.time_offset(time.saturating_duration_since(self.scope_start_time));
 
         //TODO let people change speed of oscilloscope
 
@@ -201,7 +220,7 @@ impl Scope for Oscilloscope {
         let last_point = &self.last_point;
         if let Some(ScopePoint { point: last_point, time: last_time }) = last_point {
             let last_point_screen = self.to_screen_coords(last_point.0);
-            let last_point_time_offset = Oscilloscope::time_offset(last_time.saturating_duration_since(self.scope_start_time));
+            let last_point_time_offset = self.time_offset(last_time.saturating_duration_since(self.scope_start_time));
 
             let color = self.plane.get_zone(last_point.1).fg_color.into();
 
@@ -209,7 +228,10 @@ impl Scope for Oscilloscope {
 
             let line_coords;
             if self.scope_canvas.direction == ScopeDirection::Horizontal {
-                line_coords = [[last_point_time_offset, self.scope_canvas.height - last_point_screen], [point_time_offset, self.scope_canvas.height - point_screen]];
+                line_coords = [
+                    [self.scope_canvas.width - last_point_time_offset, self.scope_canvas.height - last_point_screen],
+                    [self.scope_canvas.width - point_time_offset, self.scope_canvas.height - point_screen]
+                ];
             }
             else {
                 line_coords = [[last_point_screen, last_point_time_offset], [point_screen, point_time_offset]];
@@ -249,7 +271,7 @@ impl Scope for Oscilloscope {
             Some(point) => point.time,
             None => Instant::now(),
         };
-        let time = Oscilloscope::time_offset_rev(value);
+        let time = self.time_offset_rev(value);
         Some(now - time)
     }
 

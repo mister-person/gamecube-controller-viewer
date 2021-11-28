@@ -113,9 +113,8 @@ impl StickDisplay {
     }
 
     pub fn draw_point(&self, ctx: &mut Context, point: (i8, i8), color: Color) -> GameResult<()> {
-
         let rect = self.draw_controller_pixel(ctx, &point, color)?;
-        graphics::draw(ctx, &rect, DrawParam::new())?;
+        graphics::draw(ctx, &rect, DrawParam::new().dest([self.x, self.y]))?;
 
         Ok(())
     }

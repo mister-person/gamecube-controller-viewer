@@ -40,31 +40,31 @@ impl ButtonScope {
         })
     }
 
-    fn time_offset_rev(pos: f32) -> Duration {
-        Duration::from_micros((pos * 1000.).floor() as u64)
+    fn time_offset(&self, time: Duration) -> f32 {
+        self.scope_canvas.width - time.as_micros() as f32 / 1000.
     }
 
-    fn time_offset(time: Duration) -> f32 {
-        time.as_micros() as f32 / 1000.
+    fn time_offset_rev(&self, pos: f32) -> Duration {
+        Duration::from_micros(((self.scope_canvas.width - pos) * 1000.).floor() as u64)
     }
 
     fn get_rect(&self, ctx: &mut Context, button_index: usize, duration: Duration) -> GameResult<Mesh> {
-        let length = ButtonScope::time_offset(duration);
+        let length = self.scope_canvas.width - self.time_offset(duration);
         let dimensions = [0., (button_index as f32)*15., length, 5.].into();
         Mesh::new_rectangle(ctx, DrawMode::fill(), dimensions, BUTTON_COLORS[self.button_order[button_index]])
     }
 
     fn draw_to_canvas(&self, ctx: &mut Context, from: Instant, to: Instant, button_index: usize) -> GameResult<()> {
         let rect = self.get_rect(ctx, button_index, to.saturating_duration_since(from))?;
-        let offset = ButtonScope::time_offset(from.saturating_duration_since(self.scope_start_time));
-        graphics::draw(ctx, &rect, DrawParam::new().dest([offset, 0.]))?;
+        let offset = self.time_offset(from.saturating_duration_since(self.scope_start_time));
+        graphics::draw(ctx, &rect, DrawParam::new().dest([self.scope_canvas.width - offset, 0.]))?;
         
         Ok(())
     }
 
     pub fn draw_line_at_time(&self, ctx: &mut Context, time: Instant) -> GameResult<()> {
         let now = self.latest_time;
-        let offset = ButtonScope::time_offset(now.saturating_duration_since(time));
+        let offset = self.time_offset(now.saturating_duration_since(time));
         
         self.scope_canvas.draw_line_at_offset(ctx, offset)?;
         Ok(())
@@ -80,7 +80,7 @@ impl Scope for ButtonScope {
         self.controller.from_buffer(&buffer);
         self.latest_time = time;
 
-        let point_time_offset = ButtonScope::time_offset(time.saturating_duration_since(self.scope_start_time));
+        let point_time_offset = self.time_offset(time.saturating_duration_since(self.scope_start_time));
 
         self.scope_canvas.setup_drawing(ctx, point_time_offset)?;
 
@@ -120,8 +120,9 @@ impl Scope for ButtonScope {
         self.scope_canvas.draw(ctx, self.scope_canvas.x, self.scope_canvas.y)?;
         for (i, _button) in self.button_order.iter().enumerate() { 
             if let Some(press_time) = self.last_buttons[i] {
+                let offset = self.time_offset(now.saturating_duration_since(press_time));
                 let rect = self.get_rect(ctx, i, now.saturating_duration_since(press_time))?;
-                graphics::draw(ctx, &rect, DrawParam::new().dest([self.scope_canvas.x, self.scope_canvas.y]))?;
+                graphics::draw(ctx, &rect, DrawParam::new().dest([offset + self.scope_canvas.x, self.scope_canvas.y]))?;
             }
         }
         Ok(())
@@ -133,7 +134,7 @@ impl Scope for ButtonScope {
 
     fn get_time_from_pos(&mut self, x: f32, y: f32) -> Option<Instant> {
         let value = self.scope_canvas.get_offset_from_pos(x - self.scope_canvas.x, y - self.scope_canvas.y)?;
-        let time = ButtonScope::time_offset_rev(value);
+        let time = self.time_offset_rev(value);
         let now = self.latest_time;
         Some(now - time)
     }

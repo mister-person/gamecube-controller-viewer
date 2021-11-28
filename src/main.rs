@@ -111,15 +111,15 @@ impl<'a> GameState<'a> {
     }
 
     pub fn new<'b>(ctx: &'b mut Context, receiver: Receiver<ControllerPoll>) -> GameResult<GameState<'a>> {
-        let scope_y = Oscilloscope::new(ctx, 440., 0., 1500., 200., ScopeDirection::Horizontal)?;
-        let scope_x = Oscilloscope::new(ctx, 440., 200., 1500., 200., ScopeDirection::Horizontal)?;
-        let mut c_scope_y = Oscilloscope::new(ctx, 440., 400., 1500., 130., ScopeDirection::Horizontal)?;
-        let mut c_scope_x = Oscilloscope::new(ctx, 440., 530., 1500., 130., ScopeDirection::Horizontal)?;
+        let scope_y = Oscilloscope::new(ctx, 40., 0., 1000., 200., ScopeDirection::Horizontal)?;
+        let scope_x = Oscilloscope::new(ctx, 40., 200., 1000., 200., ScopeDirection::Horizontal)?;
+        let mut c_scope_y = Oscilloscope::new(ctx, 40., 400., 1000., 130., ScopeDirection::Horizontal)?;
+        let mut c_scope_x = Oscilloscope::new(ctx, 40., 530., 1000., 130., ScopeDirection::Horizontal)?;
         c_scope_y.plane = Box::new(zones::CStick{});
         c_scope_x.plane = Box::new(zones::CStick{});
-        let button_scope = ButtonScope::new(ctx, 440., 660., 1000., 180., ScopeDirection::Horizontal)?;
-        let stick_display = StickDisplay::new(ctx, 0., 0., 440, 440)?;
-        let mut c_stick_display = StickDisplay::new(ctx, 0., 400., 220, 220)?;
+        let button_scope = ButtonScope::new(ctx, 40., 660., 1000., 180., ScopeDirection::Horizontal)?;
+        let stick_display = StickDisplay::new(ctx, 1200., 0., 440, 440)?;
+        let mut c_stick_display = StickDisplay::new(ctx, 1310., 400., 220, 220)?;
         c_stick_display.set_plane(Box::new(zones::CStick {}));
         let used_zones = zones::get_some_zones().iter().map(|z| (*z, false)).collect();
         Ok(GameState {
@@ -293,7 +293,7 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
 
         self.button_scope.draw(ctx)?;
 
-        button_display::draw_buttons(ctx, &self.get_controller(), 410., 660., button_display::LINE_LAYOUT)?;
+        button_display::draw_buttons(ctx, &self.get_controller(), 10., 660., button_display::LINE_LAYOUT)?;
 
         self.scope_y.draw(ctx)?;
         self.scope_x.draw(ctx)?;
@@ -365,7 +365,8 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
                     ActionSuccess::Late => Color::from_rgb(255, 127, 0),
                     ActionSuccess::LateMiss => Color::RED,
                 };
-                draw_text(ctx, format!("{}, time: {:.3} frames ({} ms) {}", input.to_string(), duration_to_frame_count(*since_last), since_last.as_millis(), success), 400., 850. + (15*i) as f32, color)?;
+                let text = format!("{}, time: {:.3} frames ({} ms) {}", input.to_string(), duration_to_frame_count(*since_last), since_last.as_millis(), success);
+                draw_text(ctx, text, 400., 850. + (15*i) as f32, color)?;
             }
             draw_text(ctx, format!("chance of success: {}%", success_rate * 100.), 400., 850. + (15*actions.len()) as f32, Color::CYAN)?;
         }
