@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use ggez::input::mouse;
 use ggez::{Context, ContextBuilder, GameResult};
 use ggez::conf::WindowMode;
-use ggez::graphics::{self, Color, DrawParam, Rect, Text, TextFragment};
+use ggez::graphics::{self, Color, DrawMode, DrawParam, Rect, Text, TextFragment};
 use ggez::event::{self, EventHandler};
 
 mod controller;
@@ -45,6 +45,9 @@ mod input_sequence;
 const WIDTH: u16 = 1600;
 const HEIGHT: u16 = 1000;
 
+//const ORANGE: Color = Color {255, 127, 0};
+const ORANGE: Color = Color { r: 1., g: 0.5, b: 0., a: 1. };
+
 fn main() {
     let (mut ctx, event_loop) = ContextBuilder::new("gc viewer", "mister_person")
         .window_mode(WindowMode::dimensions(Default::default(), WIDTH.into(), HEIGHT.into()))
@@ -66,6 +69,8 @@ enum StickPosFormat {
     Integer,
     Decimal,
 }
+
+type CompletedSequence = (&'static str, Vec<(ControllerAction, Duration, ActionSuccess)>, f64);
 
 struct GameState<'a> {
     receiver: Receiver<ControllerPoll>,
@@ -92,7 +97,7 @@ struct GameState<'a> {
     stick_pos_format: StickPosFormat,
 
     input_sequences_states: Vec<input_sequence::InputSequenceState<'a>>,
-    completed_sequences: Vec<(Vec<(ControllerAction, Duration, ActionSuccess)>, f64)>,
+    completed_sequences: Vec<CompletedSequence>,
     used_zones: Vec<(&'a Zone, bool)>,
 }
 
@@ -228,7 +233,7 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
                     if finished {
                         if let Some(actions) = seq.sequence_info() {
                             let rate = seq.success_rate().unwrap_or(0.);
-                            self.completed_sequences.push((actions, rate));
+                            self.completed_sequences.push((seq.sequence.name(), actions, rate));
                         }
                     }
                 }
@@ -293,7 +298,7 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
 
         self.button_scope.draw(ctx)?;
 
-        button_display::draw_buttons(ctx, &self.get_controller(), 10., 660., button_display::LINE_LAYOUT)?;
+        button_display::draw_buttons(ctx, &self.get_controller(), 1050., 660., button_display::LINE_LAYOUT)?;
 
         self.scope_y.draw(ctx)?;
         self.scope_x.draw(ctx)?;
@@ -356,27 +361,71 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
 
         draw_text(ctx, format!("(fpx: {})", ggez::timer::fps(ctx)), 250., 0., Color::WHITE)?;
 
-        if let Some((actions, success_rate)) = self.completed_sequences.get(self.completed_sequences.len() - 1) {
-            for (i, (input, since_last, success)) in actions.iter().enumerate() {
-                let color = match success {
-                    ActionSuccess::EarlyMiss => Color::from_rgb(255, 0, 128),
-                    ActionSuccess::Early => Color::MAGENTA,
-                    ActionSuccess::Success => Color::CYAN,
-                    ActionSuccess::Late => Color::from_rgb(255, 127, 0),
-                    ActionSuccess::LateMiss => Color::RED,
-                };
-                let text = format!("{}, time: {:.3} frames ({} ms) {}", input.to_string(), duration_to_frame_count(*since_last), since_last.as_millis(), success);
-                draw_text(ctx, text, 400., 850. + (15*i) as f32, color)?;
-            }
-            draw_text(ctx, format!("chance of success: {}%", success_rate * 100.), 400., 850. + (15*actions.len()) as f32, Color::CYAN)?;
+        let mut y_pos = 700.;
+        for sequence in self.completed_sequences.iter().rev().take(4) {
+            let num_lines = draw_completed_sequence(ctx, sequence, 1100., y_pos)?;
+            y_pos += (num_lines + 1) as f32 * 15.;
         }
 
         graphics::present(ctx)
     }
 }
 
+//returns line count
+fn draw_completed_sequence(ctx: &mut Context, sequence: &CompletedSequence, x: f32, y: f32) -> GameResult<i32> {
+    let (name, actions, success_rate) = sequence;
+    let name_text = format!("{}, ", name);
+    let chance_text = format!("{}%", success_rate * 100.);
+    let chance_color = match *success_rate {
+        x if x == 1. => Color::GREEN,
+        x if x == 0. => Color::RED,
+        x if x > 0. && x < 1. => ORANGE,
+        _ => Color::MAGENTA,
+    };
+    draw_colored_text(ctx, vec![name_text, "chance of success: ".to_string(), chance_text], x, y, &[Color::YELLOW, Color::CYAN, chance_color])?;
+
+    let dot_start_y = y + (15*actions.len() + 15) as f32;
+    let mut dot_x_pos = x;
+    const FRAME_LENGTH: f32 = 30.;
+    for i in 0..15 {
+        let x = x + i as f32 * FRAME_LENGTH;
+        let points = [[x, dot_start_y + 3.], [x, dot_start_y + 12.]];
+        let line = graphics::Mesh::new_line(ctx, &points, 1., Color::from_rgb(128, 128, 128))?;
+        graphics::draw(ctx, &line, DrawParam::new())?;
+    }
+
+    for (i, (input, since_last, success)) in actions.iter().enumerate() {
+        let color = match success {
+            ActionSuccess::EarlyMiss => Color::from_rgb(255, 0, 128),
+            ActionSuccess::Early => Color::MAGENTA,
+            ActionSuccess::Success => Color::CYAN,
+            ActionSuccess::Late => ORANGE,
+            ActionSuccess::LateMiss => Color::RED,
+        };
+        let text = format!("{}, time: {:.3} frames ({} ms) {}", input.to_string(), duration_to_frame_count(*since_last), since_last.as_millis(), success);
+        draw_text(ctx, text, x, y + (15*(i + 1)) as f32, color)?;
+
+        dot_x_pos += duration_to_frame_count(*since_last) as f32 * FRAME_LENGTH;
+        let dot = graphics::Mesh::new_circle(ctx, DrawMode::fill(), [dot_x_pos, dot_start_y + 7.], 3., 1., color)?;
+        graphics::draw(ctx, &dot, DrawParam::new())?;
+    }
+    Ok((actions.len() + 2).try_into().unwrap())
+}
+
 fn duration_to_frame_count(duration: Duration) -> f64 {
     return duration.as_micros() as f64 / (1_000_000. / 60.)
+}
+
+fn draw_colored_text<F>(ctx: &mut Context, texts: Vec<F>, x: f32, y: f32, colors: &[Color]) -> GameResult<()>
+where F: Into<TextFragment>
+{
+    let mut x = x;
+    for (text_str, color) in texts.into_iter().zip(colors.iter()) {
+        let text = Text::new(TextFragment::new(text_str).color(*color));
+        graphics::draw(ctx, &text, DrawParam::new().dest([x, y]))?;
+        x += text.width(ctx);
+    }
+    Ok(())
 }
 
 fn draw_text<F>(ctx: &mut Context, text: F, x: f32, y: f32, color: Color) -> GameResult<()>

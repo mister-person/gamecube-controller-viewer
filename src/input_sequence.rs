@@ -1,6 +1,6 @@
 use std::{fmt::Display, ops::{Range}, time::{Duration, Instant}};
 
-use crate::{controller::{A_BUTTON, B_BUTTON, Button, Controller, Y_BUTTON}, duration_to_frame_count, zones::{self, Zone, ZoneTrait}};
+use crate::{controller::{A_BUTTON, B_BUTTON, Button, Controller, X_BUTTON, Y_BUTTON}, duration_to_frame_count, zones::{self, Zone, ZoneTrait}};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ControllerAction {
@@ -64,13 +64,6 @@ impl InputSequence {
     }
 }
 
-pub struct InputSequenceState<'a> {
-    pub sequence: &'a InputSequence,
-    pub state: SequenceState,
-    pub history: Vec<(ControllerAction, Instant)>,
-    pub completed: Option<Vec<(ControllerAction, Instant)>>,
-}
-
 pub enum ActionSuccess {
     EarlyMiss,
     Early,
@@ -91,6 +84,13 @@ impl Display for ActionSuccess {
     }
 }
 
+pub struct InputSequenceState<'a> {
+    pub sequence: &'a InputSequence,
+    pub state: SequenceState,
+    pub history: Vec<(ControllerAction, Instant)>,
+    pub completed: Option<Vec<(ControllerAction, Instant)>>,
+}
+
 impl<'a> InputSequenceState<'a> {
     pub fn new(sequence: &'a InputSequence) -> Self {
         Self { sequence, state: 0, history: Vec::new(), completed: None }
@@ -99,6 +99,17 @@ impl<'a> InputSequenceState<'a> {
     pub fn action(&mut self, action: ControllerAction, controller: &Controller, now: Instant) -> bool {
         if let Some((expected_action, frame_number)) = self.sequence.actions.get(self.state) {
             if action == *expected_action {
+
+                if let Some((_, last_time)) = self.history.last() {
+                    let time = duration_to_frame_count(now - *last_time);
+                    let window = &self.sequence.actions[self.state].1;
+                    println!("{}, {:?}", time, window);
+                    if window.0 as f64 - time > 5. || time - window.1 as f64 > 5. {
+                        self.reset();
+                        return false
+                    }
+                }
+
                 self.state += 1;
                 self.history.push((action, now));
             }
@@ -194,9 +205,15 @@ impl<'a> InputSequenceState<'a> {
 
 pub fn make_some_sequences() -> Vec<InputSequence> {
     let mut ret = Vec::new();
+
     let mut short_hop_3f = InputSequence::new("3f short hop");
     short_hop_3f.add(ControllerAction::Press(Y_BUTTON), 0);
     short_hop_3f.add(ControllerAction::Release(Y_BUTTON), 1..2);
+    ret.push(short_hop_3f);
+
+    let mut short_hop_3f = InputSequence::new("3f short hop");
+    short_hop_3f.add(ControllerAction::Press(X_BUTTON), 0);
+    short_hop_3f.add(ControllerAction::Release(X_BUTTON), 1..2);
     ret.push(short_hop_3f);
 
     let mut jc_shine = InputSequence::new("jc shine");

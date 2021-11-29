@@ -97,7 +97,7 @@ impl ScopeCanvas {
         let point_time_offset = self.offset;
         if point_time_offset <= 0. {
             self.offset_old = self.offset;
-            let testrect = Mesh::new_rectangle(ctx, DrawMode::fill(), [0., 0., 5., 5.].into(), Color::GREEN)?;
+            let testrect = Mesh::new_rectangle(ctx, DrawMode::fill(), [0., 0., 5., 5.].into(), Color::BLUE)?;
             std::mem::swap(&mut self.canvas, &mut self.canvas_old);
             graphics::set_canvas(ctx, Some(&self.canvas));
             graphics::clear(ctx, Color::from_rgba(0, 0, 0, 0));
@@ -175,11 +175,11 @@ impl Oscilloscope {
     }
 
     fn time_offset(&self, time: Duration) -> f32 {
-        self.scope_canvas.width - time.as_micros() as f32 / 5000.
+        self.scope_canvas.width - time.as_micros() as f32 / 1000.
     }
 
     fn time_offset_rev(&self, pos: f32) -> Duration {
-        Duration::from_micros(((self.scope_canvas.width - pos) * 5000.).floor() as u64)
+        Duration::from_micros(((self.scope_canvas.width - pos) * 1000.).floor() as u64)
     }
 
     pub fn draw_line_at_time(&self, ctx: &mut Context, time: Instant) -> GameResult<()> {

@@ -39,6 +39,8 @@ pub fn draw_button(ctx: &mut Context, pos: [f32; 2], button: char, color: Color,
     let text = Text::new(button);
     let text_color = if pressed {Color::BLACK} else {Color::WHITE};
     graphics::draw(ctx, &circle, DrawParam::new())?;
-    graphics::draw(ctx, &text, DrawParam::new().dest(pos).offset([0.5, 0.5]).color(text_color))?;
+    let offsetx = text.dimensions(ctx).w / 2.;
+    let offsety = text.dimensions(ctx).h / 2.;
+    graphics::draw(ctx, &text, DrawParam::new().dest(pos).offset([offsetx, offsety]).color(text_color))?;
     Ok(())
 }
