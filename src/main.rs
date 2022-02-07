@@ -98,7 +98,7 @@ struct GameState<'a> {
 
     input_sequences_states: Vec<input_sequence::InputSequenceState<'a>>,
     completed_sequences: Vec<CompletedSequence>,
-    used_zones: Vec<(&'a Zone, bool)>,
+    used_zones: Vec<(&'a Zone, bool, bool)>,
 }
 
 impl<'a> GameState<'a> {
@@ -126,7 +126,7 @@ impl<'a> GameState<'a> {
         let stick_display = StickDisplay::new(ctx, 1200., 0., 440, 440)?;
         let mut c_stick_display = StickDisplay::new(ctx, 1310., 400., 220, 220)?;
         c_stick_display.set_plane(Box::new(zones::CStick {}));
-        let used_zones = zones::get_some_zones().iter().map(|z| (*z, false)).collect();
+        let used_zones = zones::get_some_zones().iter().map(|z| (*z, false, false)).collect();
         Ok(GameState {
             receiver,
             controllers: [Controller::new(); 4],
@@ -207,6 +207,8 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
 
             let stick_pos = self.get_controller().stick_pos();
             let clamp_pos = controller::clamp(stick_pos.0, stick_pos.1);
+            let c_stick_pos = self.get_controller().c_stick_pos();
+            let c_clamp_pos = controller::clamp(c_stick_pos.0, c_stick_pos.1);
 
             let controller = self.get_controller();
 
@@ -217,7 +219,7 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
             actions.extend(
                 controller.buttons_just_released().iter().map(|button| ControllerAction::Release(**button))
             );
-            for (i, (zone, in_last)) in self.used_zones.clone().iter().enumerate() {
+            for (i, (zone, in_last, c_in_last)) in self.used_zones.clone().iter().enumerate() {
                 let in_zone = zone.in_zone(clamp_pos);
                 if in_zone && !in_last {
                     actions.push(ControllerAction::Enter((**zone).clone()));
@@ -225,8 +227,31 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
                 if !in_zone && *in_last {
                     actions.push(ControllerAction::Leave((**zone).clone()));
                 }
+                let c_in_zone = zone.in_zone(c_clamp_pos);
+                if c_in_zone && !c_in_last {
+                    actions.push(ControllerAction::CEnter((**zone).clone()));
+                }
+                if !c_in_zone && *c_in_last {
+                    actions.push(ControllerAction::CLeave((**zone).clone()));
+                }
                 self.used_zones[i].1 = in_zone;
+                self.used_zones[i].2 = c_in_zone;
             }
+
+            //TODO generalize
+            if controller.l_analog() >= 43 && controller.l_analog_last() < 43 {
+                actions.push(ControllerAction::LEnter((43, 140)));
+            }
+            if controller.l_analog() < 43 && controller.l_analog_last() >= 43 {
+                actions.push(ControllerAction::LLeave((43, 140)));
+            }
+            if controller.r_analog() >= 43 && controller.r_analog_last() < 43 {
+                actions.push(ControllerAction::REnter((43, 140)));
+            }
+            if controller.r_analog() < 43 && controller.r_analog_last() >= 43 {
+                actions.push(ControllerAction::RLeave((43, 140)));
+            }
+
             for seq in self.input_sequences_states.iter_mut() {
                 for action in &actions {
                     let finished = seq.action(action.clone(), &controller, poll.time);
@@ -258,8 +283,6 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
             }
 
             //ditto above but c stick, TODO dry
-            let c_stick_pos = self.get_controller().c_stick_pos();
-            let c_clamp_pos = controller::clamp(c_stick_pos.0, c_stick_pos.1);
             self.c_prev_coords.push_front((c_stick_pos, poll.time));
             self.c_stick_display.add_point(ctx, c_clamp_pos)?;
             if c_clamp_pos != c_stick_pos {
@@ -360,6 +383,9 @@ impl<'a> EventHandler<ggez::GameError> for GameState<'a> {
         }
 
         draw_text(ctx, format!("(fpx: {})", ggez::timer::fps(ctx)), 250., 0., Color::WHITE)?;
+
+        draw_text(ctx, format!("L: {}", self.get_controller().l_analog()), 0., 45., Color::WHITE)?;
+        draw_text(ctx, format!("R: {}", self.get_controller().r_analog()), 0., 60., Color::WHITE)?;
 
         let mut y_pos = 700.;
         for sequence in self.completed_sequences.iter().rev().take(4) {

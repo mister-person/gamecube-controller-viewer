@@ -28,6 +28,8 @@ pub struct Controller {
     starty: i8,
     c_startx: i8,
     c_starty: i8,
+    l_start: u8,
+    r_start: u8,
 }
 
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -62,7 +64,7 @@ pub const BUTTONS: [Button; 12] = [A_BUTTON, B_BUTTON, X_BUTTON, Y_BUTTON, D_LEF
 
 impl Controller {
     pub fn new() -> Controller {
-        let c = Controller { buffer: [0; 8], buffer_last: [0; 8], startx: 0, starty: 0, c_startx: 0, c_starty: 0};
+        let c = Controller { buffer: [0; 8], buffer_last: [0; 8], startx: 0, starty: 0, c_startx: 0, c_starty: 0, l_start: 0, r_start: 0 };
         c
     }
 
@@ -72,6 +74,8 @@ impl Controller {
             self.starty = (buffer[3] as i8).wrapping_sub(-128);
             self.c_startx = (buffer[4] as i8).wrapping_sub(-128);
             self.c_starty = (buffer[5] as i8).wrapping_sub(-128);
+            self.l_start = buffer[6];
+            self.r_start = buffer[7];
             //println!("setting start pos's {} {} {} {}", self.startx, self.starty, self.c_startx, self.c_starty);
         }
         self.buffer_last = self.buffer;
@@ -154,6 +158,22 @@ impl Controller {
 
     pub fn c_stick_raw(&self) -> (i8, i8) {
         ((self.buffer[4] as i8).wrapping_sub(-128), (self.buffer[5] as i8).wrapping_sub(-128))
+    }
+
+    pub fn l_analog(&self) -> u8 {
+        self.buffer[6].saturating_sub(self.l_start)
+    }
+
+    pub fn r_analog(&self) -> u8 {
+        self.buffer[7].saturating_sub(self.r_start)
+    }
+
+    pub fn l_analog_last(&self) -> u8 {
+        self.buffer_last[6].saturating_sub(self.l_start)
+    }
+
+    pub fn r_analog_last(&self) -> u8 {
+        self.buffer_last[7].saturating_sub(self.r_start)
     }
 }
 

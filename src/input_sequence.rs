@@ -1,6 +1,6 @@
 use std::{fmt::Display, ops::{Range}, time::{Duration, Instant}};
 
-use crate::{controller::{A_BUTTON, B_BUTTON, Button, Controller, X_BUTTON, Y_BUTTON}, duration_to_frame_count, zones::{self, Zone, ZoneTrait}};
+use crate::{controller::{A_BUTTON, B_BUTTON, Button, Controller, L_BUTTON, R_BUTTON, X_BUTTON, Y_BUTTON, Z_BUTTON}, duration_to_frame_count, zones::{self, Zone, ZoneTrait}};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ControllerAction {
@@ -9,6 +9,12 @@ pub enum ControllerAction {
     Release(Button),
     Enter(Zone),
     Leave(Zone),
+    CEnter(Zone),
+    CLeave(Zone),
+    LEnter((u8, u8)),
+    LLeave((u8, u8)),
+    REnter((u8, u8)),
+    RLeave((u8, u8)),
 }
 
 impl ToString for ControllerAction {
@@ -19,18 +25,32 @@ impl ToString for ControllerAction {
             ControllerAction::Release(button) => format!("Released {}", button.name()),
             ControllerAction::Enter(zone) => format!("Entered {}", zone.get_name()),
             ControllerAction::Leave(zone) => format!("Left {}", zone.get_name()),
+            ControllerAction::CEnter(zone) => format!("C Entered {}", zone.get_name()),
+            ControllerAction::CLeave(zone) => format!("C Left {}", zone.get_name()),
+            ControllerAction::LEnter(zone) => format!("L Entered [{}, {}]", zone.0, zone.1),
+            ControllerAction::LLeave(zone) => format!("L Left [{}, {}]", zone.0, zone.1),
+            ControllerAction::REnter(zone) => format!("R Entered [{}, {}]", zone.0, zone.1),
+            ControllerAction::RLeave(zone) => format!("R Left [{}, {}]", zone.0, zone.1),
         }
     }
 }
 
 type SequenceState = usize;
 
-pub struct InputSequence {
-    name: &'static str,
-    actions: Vec<(ControllerAction,(i32, i32))>,
+pub struct InputSequenceAction {
+    actions: Vec<ControllerAction>,
+    start: i32,
+    end: i32,
+    from: usize,
+    is_fail: bool, //TODO
 }
 
-trait FrameRange {
+pub struct InputSequence {
+    name: &'static str,
+    actions: Vec<InputSequenceAction>,
+}
+
+pub trait FrameRange {
     fn get_range(&self) -> (i32, i32);
 }
 
@@ -46,6 +66,12 @@ impl FrameRange for i32 {
     }
 }
 
+impl Into<Vec<ControllerAction>> for ControllerAction {
+    fn into(self) -> Vec<ControllerAction> {
+        vec![self]
+    }
+}
+
 impl InputSequence {
     pub fn new(name: &'static str) -> InputSequence {
         InputSequence {
@@ -54,8 +80,13 @@ impl InputSequence {
         }
     }
 
-    pub fn add(&mut self, action: ControllerAction, frame_number: impl FrameRange) {
-        self.actions.push((action, frame_number.get_range()));
+    pub fn add(&mut self, action: impl Into<Vec<ControllerAction>>, frame_number: impl FrameRange) {
+        self.add_from(action, frame_number, self.actions.len() - 1)
+    }
+
+    pub fn add_from(&mut self, action: impl Into<Vec<ControllerAction>>, frame_number: impl FrameRange, from: usize) {
+        let range = frame_number.get_range();
+        self.actions.push(InputSequenceAction { actions: action.into(), start: range.0, end: range.1, from, is_fail: false });
     }
 
     /// Get a reference to the controller sequence's name.
@@ -97,18 +128,18 @@ impl<'a> InputSequenceState<'a> {
     }
 
     pub fn action(&mut self, action: ControllerAction, controller: &Controller, now: Instant) -> bool {
-        if let Some((expected_action, frame_number)) = self.sequence.actions.get(self.state) {
-            if action == *expected_action {
-
-                if let Some((_, last_time)) = self.history.last() {
-                    let time = duration_to_frame_count(now - *last_time);
-                    let window = &self.sequence.actions[self.state].1;
-                    println!("{}, {:?}", time, window);
-                    if window.0 as f64 - time > 5. || time - window.1 as f64 > 5. {
-                        self.reset();
-                        return false
-                    }
+        if let Some(expected_action) = self.sequence.actions.get(self.state) {
+            if let Some((_, last_time)) = self.history.last() {
+                let time = duration_to_frame_count(now - *last_time);
+                let window = (expected_action.start, expected_action.end);
+                println!("{}, {:?}", time, window);
+                if window.0 as f64 - time > 5. || time - window.1 as f64 > 5. {
+                    self.reset();
                 }
+            }
+
+            //if action == expected_action.action {
+            if expected_action.actions.contains(&action) {
 
                 self.state += 1;
                 self.history.push((action, now));
@@ -124,13 +155,20 @@ impl<'a> InputSequenceState<'a> {
     }
 
     pub fn sequence_info(&self) -> Option<Vec<(ControllerAction, Duration, ActionSuccess)>> {
+        //TODO refactor this function so it uses is_successful
         let seq = self.completed_sequence()?;
         let start = seq.get(0)?.1;
-        Some(seq.iter().enumerate().scan(start, |last, (i, (action, time))| {
-            let since_last = *time - *last;
+        Some(seq.iter().enumerate().scan(vec![start], |lasts, (i, (action, time))| {
+            let expected_action = &self.sequence.actions[i];
+            if expected_action.from == usize::MAX {
+                return Some((action.clone(), Duration::ZERO, ActionSuccess::Success))
+            }
+            let since_last = *time - lasts[expected_action.from];//TODO rename
             let frames_since_last = duration_to_frame_count(since_last);
-            *last = *time;
-            let (window_start, window_end) = self.sequence.actions[i].1;
+            let since_last = *time - lasts[lasts.len() - 1];
+            lasts.push(*time);
+            let window_start = expected_action.start;
+            let window_end = expected_action.end;
             if frames_since_last > window_end as f64 + 1. {
                 return Some((action.clone(), since_last, ActionSuccess::LateMiss));
             }
@@ -153,18 +191,19 @@ impl<'a> InputSequenceState<'a> {
         self.completed.as_ref()
     }
 
-    pub fn is_successful(&self, actions: &[(&'a ControllerAction, i32)]) -> bool {
-        let mut last_frame_number = 0;
-        for (i, (action, frame_number)) in actions.iter().enumerate() {
-            let frame_diff = self.sequence.actions[i].1;
-            let expected_frame = (frame_diff.0 + last_frame_number, frame_diff.1 + last_frame_number);
+    fn is_successful(&self, actions: &[(&'a ControllerAction, i32)]) -> bool {
+        let mut last_frame_numbers = vec![0];
+        for (i, (action, frame_number)) in actions.iter().enumerate().skip(1) {
+            let expected_action = &self.sequence.actions[i];
+            let frame_diff = (expected_action.start, expected_action.end);
+            let expected_frame = (frame_diff.0 + last_frame_numbers[expected_action.from], frame_diff.1 + last_frame_numbers[expected_action.from]);
             if *frame_number < expected_frame.0 {
                 return false;
             }
             else if *frame_number > expected_frame.1 {
                 return false;
             }
-            last_frame_number = *frame_number;
+            last_frame_numbers.push(*frame_number);
         }
         true
     }
@@ -207,30 +246,90 @@ pub fn make_some_sequences() -> Vec<InputSequence> {
     let mut ret = Vec::new();
 
     let mut short_hop_3f = InputSequence::new("3f short hop");
-    short_hop_3f.add(ControllerAction::Press(Y_BUTTON), 0);
-    short_hop_3f.add(ControllerAction::Release(Y_BUTTON), 1..2);
+    short_hop_3f.add(vec![ControllerAction::Press(Y_BUTTON), ControllerAction::Press(X_BUTTON)], 0);
+    short_hop_3f.add(vec![ControllerAction::Release(Y_BUTTON), ControllerAction::Release(X_BUTTON)], 1..2);
     ret.push(short_hop_3f);
 
+/*
     let mut short_hop_3f = InputSequence::new("3f short hop");
     short_hop_3f.add(ControllerAction::Press(X_BUTTON), 0);
     short_hop_3f.add(ControllerAction::Release(X_BUTTON), 1..2);
     ret.push(short_hop_3f);
+*/
+
+    let mut wavedash_3f = InputSequence::new("3f wavedash");
+    wavedash_3f.add(ControllerAction::Press(Y_BUTTON), 0);
+    wavedash_3f.add(ControllerAction::Press(R_BUTTON), 3);
+    ret.push(wavedash_3f);
+
+    let mut wavedash_3f = InputSequence::new("3f wavedash");
+    wavedash_3f.add(ControllerAction::Press(Y_BUTTON), 0);
+    wavedash_3f.add(ControllerAction::Press(L_BUTTON), 3);
+    ret.push(wavedash_3f);
+
+    let mut wavedash_3f = InputSequence::new("hax OS wavedash 3f");//TODO this is wrong
+    wavedash_3f.add(vec![ControllerAction::Press(Y_BUTTON), ControllerAction::Press(X_BUTTON)], 0);
+    wavedash_3f.add(vec![ControllerAction::Press(L_BUTTON), ControllerAction::Press(R_BUTTON)], 2..3);
+    wavedash_3f.add_from(vec![ControllerAction::Press(L_BUTTON), ControllerAction::Press(R_BUTTON)], 0..1, 1);
+    ret.push(wavedash_3f);
+
+    let mut wavedash_3f = InputSequence::new("hax OS wavedash 3f");
+    wavedash_3f.add(ControllerAction::Press(Y_BUTTON), 0);
+    wavedash_3f.add(ControllerAction::Press(R_BUTTON), 2..3);
+    wavedash_3f.add_from(ControllerAction::Press(L_BUTTON), 0..1, 0);
+    ret.push(wavedash_3f);
 
     let mut jc_shine = InputSequence::new("jc shine");
     jc_shine.add(ControllerAction::Press(Y_BUTTON), 0);
     jc_shine.add(ControllerAction::Press(B_BUTTON), 3);
     ret.push(jc_shine);
 
-    let mut a_b_same_frame = InputSequence::new("press A and B on the same frame");
+    let mut jc_grab = InputSequence::new("jc grab");
+    jc_grab.add(ControllerAction::Press(Y_BUTTON), 0);
+    jc_grab.add(ControllerAction::Press(Z_BUTTON), 1..2);
+    ret.push(jc_grab);
+
+    let mut jc_grab = InputSequence::new("jc grab");
+    jc_grab.add(ControllerAction::Press(X_BUTTON), 0);
+    jc_grab.add(ControllerAction::Press(Z_BUTTON), 1..2);
+    ret.push(jc_grab);
+
+    let mut jc_up_smash = InputSequence::new("jc up_smash");
+    jc_up_smash.add(ControllerAction::Press(Y_BUTTON), 0);
+    jc_up_smash.add(ControllerAction::CEnter(Zone::SquareZone(zones::UP_SMASH)), 1..2);
+    ret.push(jc_up_smash);
+
+    let mut jc_up_smash = InputSequence::new("jc up_smash");
+    jc_up_smash.add(ControllerAction::Press(X_BUTTON), 0);
+    jc_up_smash.add(ControllerAction::CEnter(Zone::SquareZone(zones::UP_SMASH)), 1..2);
+    ret.push(jc_up_smash);
+
+    let mut a_b_same_frame = InputSequence::new("press A+B on same frame");
     a_b_same_frame.add(ControllerAction::Press(A_BUTTON), 0);
     a_b_same_frame.add(ControllerAction::Press(B_BUTTON), 0);
     ret.push(a_b_same_frame);
 
-    let mut pivot = InputSequence::new("pivot");
+    let mut a_b_same_frame = InputSequence::new("press A+B on same frame");
+    a_b_same_frame.add(ControllerAction::Press(B_BUTTON), 0);
+    a_b_same_frame.add(ControllerAction::Press(A_BUTTON), 0);
+    ret.push(a_b_same_frame);
+
+    let mut pivot = InputSequence::new("pivot right");
     pivot.add(ControllerAction::Leave(Zone::SquareZone(zones::RIGHT_SMASH)), 0);
     pivot.add(ControllerAction::Enter(Zone::SquareZone(zones::LEFT_SMASH)), 0..5);
     pivot.add(ControllerAction::Leave(Zone::SquareZone(zones::LEFT_SMASH)), 1);
     ret.push(pivot);
+
+    let mut pivot = InputSequence::new("pivot left");
+    pivot.add(ControllerAction::Leave(Zone::SquareZone(zones::LEFT_SMASH)), 0);
+    pivot.add(ControllerAction::Enter(Zone::SquareZone(zones::RIGHT_SMASH)), 0..5);
+    pivot.add(ControllerAction::Leave(Zone::SquareZone(zones::RIGHT_SMASH)), 1);
+    ret.push(pivot);
+
+    let mut adt = InputSequence::new("adt");
+    adt.add(vec![ControllerAction::LEnter((43, 140)), ControllerAction::REnter((43, 140))], 0);
+    adt.add(vec![ControllerAction::Press(L_BUTTON), ControllerAction::Press(R_BUTTON)], 1);
+    ret.push(adt);
 
     ret
 }
